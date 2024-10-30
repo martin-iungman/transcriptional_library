@@ -4,3 +4,5 @@
 .Ruserdata
 Library_data
 External_data
+Data_processing/FASTQ
+Data_processing/Count_table
