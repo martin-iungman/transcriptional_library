@@ -1,0 +1,18 @@
+project:
+  title: "transcriptional_library"
+  execute-dir: project
+author: "Martín Iungman"
+format: 
+  html:
+    code-fold: true
+    code-summary: "Code"
+    df-print: paged
+editor: visual
+execute:
+  warning: false
+  error: false
+self-contained: true
+toc: true
+toc-depth: 4
+theme: cerulean
+lang: "es-AR"
