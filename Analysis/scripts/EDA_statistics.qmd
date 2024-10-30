@@ -1,0 +1,284 @@
+---
+title: "Exploration & Descriptive statistics"
+format: html
+editor: visual
+---
+
+Last update: `r Sys.Date()`
+
+```{r}
+#| code-summary: Settings
+library(tidyverse)
+library(patchwork)
+library(ggnewscale)
+library(wCorr)
+library(ggsankey)
+
+theme_set(theme_bw())
+files=list.files("Data_processing/Count_table","counts_ampliconseq2023_f2_.-..tsv", full.names = T)
+clrs=ghibli::ghibli_palette("PonyoMedium")[c(3,4,6,2,5,7,1)]
+clrs2=ghibli::ghibli_palette("PonyoLight")[c(3,4,6,2,5,7,1)]
+```
+
+### Counts distribution
+
+```{r}
+data=map(files, ~read_tsv(.x, col_names = c("seq_id", "counts")))
+names(data)=files%>%str_remove("^.+2023_f2_")%>%str_remove(".tsv$")
+data=imap(data, ~mutate(.x, counts=counts/2, sample_rep=.y))
+data_long=data%>%list_rbind()%>%mutate(sample=factor(as.numeric(str_remove(sample_rep, "-.$"))-1), rep=factor(str_replace(sample_rep, "^.-", "Rep ") %>% str_replace("3","2")))
+counts_tot=data_long%>%group_by(sample,rep)%>%summarise(sumCounts=sum(counts)) %>% ungroup()
+counts_tot=counts_tot%>%group_by(rep)%>%mutate(mean_size_rep=mean(sumCounts))%>%ungroup()
+data_long=data_long%>%left_join(counts_tot)%>%mutate(counts_norm_libsize=counts/(sumCounts/mean_size_rep))%>%select(-mean_size_rep)
+
+```
+
+```{r}
+#| label: fig-2
+#| fig-cap: Number of counts per sample
+counts_tot%>%
+  ggplot(aes(sample, sumCounts, fill=rep))+geom_col(position="dodge")+ylab("Counts")+ggtitle("Total counts per sample")+xlab("Sample")+scale_fill_manual(values=clrs[1:2])
+```
+
+```{r}
+#| label: fig-3
+#| fig-cap: Distribution of total counts per sequence in the library, separated by replicate (columns) and gate (rows). Pseudocount=count+0.5. 
+data_long%>%ggplot(aes(counts+0.05, fill=rep))+geom_density()+scale_x_log10()+facet_grid(sample~rep, labeller = labeller(sample))+xlab("pseudocounts")+theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), legend.position = "none")+scale_fill_manual(values=clrs[1:2])
+```
+
+```{r}
+#| label: fig-4
+#| fig-cap: Number of sequences with at least one positive alignment in the sample
+data_long%>%filter(counts>0)%>%count(sample, rep)%>%
+  ggplot(aes(sample, n, fill=rep))+geom_col(position="dodge")+ylab("Counts")+ggtitle("Number of present sequences")+xlab("Sample")+scale_fill_manual(values=clrs[1:2])
+data_long%>%filter(counts>1000)%>%count(sample, rep)%>%
+  ggplot(aes(sample, n, fill=rep))+geom_col(position="dodge")+ylab("Counts")+ggtitle("Number of present sequences (N>1000)")+xlab("Sample")+scale_fill_manual(values=clrs[1:2])
+```
+
+```{r}
+#| label: fig-5
+#| fig-cap: Number of sequences present in each replicate and in either (1+2), from the 23912 different sequences in the library. 
+
+tmp=data_long%>%mutate(rep=factor("1|2"))%>%bind_rows(data_long)%>%group_by(seq_id, rep)%>%mutate(sum_counts=sum(counts))%>%ungroup()
+tmp2=tmp%>%filter(sum_counts>0)%>%select(seq_id,rep)%>%unique()
+tmp2=tmp2%>%count(seq_id)%>%filter(n==3)%>%mutate(rep=factor("1&2"))%>%bind_rows(tmp2)%>%count(rep)
+p1=tmp2%>%
+  ggplot(aes(rep, n, fill=rep, label=n))+geom_col()+ggtitle("Number of present sequences \n N>0")+xlab("Replicate")+ylab("Counts")+geom_label(fill="lightgrey")+theme(legend.position = "none")+scale_fill_manual(values=clrs[c(5,3,1,2)])+theme(text=element_text(size=15))
+tmp2=tmp%>%filter(sum_counts>1000)%>%select(seq_id,rep)%>%unique()
+tmp2=tmp2%>%count(seq_id)%>%filter(n==2)%>%mutate(rep=factor("1&2"))%>%bind_rows(tmp2)%>%count(rep)
+p2=tmp2%>%
+  ggplot(aes(rep, n, fill=rep, label=n))+geom_col()+ggtitle("Number of present sequences \n N>1000")+xlab("Replicate")+ylab("Counts")+geom_label(fill="lightgrey")+theme(legend.position = "none")+scale_fill_manual(values=clrs[c(5,3,1,2)])+theme(text=element_text(size=15))
+p1+p2
+```
+
+```{r}
+#| label: fig-6
+#| fig-cap: Distribution of total counts per sequence, separated by replicate, after correction by library size. 
+
+sums=data_long%>%group_by(rep, seq_id)%>%summarise(sum_seq=sum(counts_norm_libsize))
+sums%>%ggplot(aes(sum_seq, col=rep))+geom_density()+scale_x_log10()+scale_color_manual(values=clrs[1:2])+xlab("Counts per sequence (corrected by library size)")
+
+```
+
+The correction for library size:
+
+$$
+X'_{ik}=\frac{X_{ik}*\frac{1}{n}\sum_{k}^n\sum_{j} X_{jk}}{\sum_{j} X_{jk}}
+$$
+
+where $i$ is the sequence, $k$ is the sample , $X$ are the counts, $X'$ are the corrected counts. In other words, the correction term is the deviation of the library size of the sample from the mean library size sample.
+
+### Comparison with previous data
+
+```{r}
+#| label: fig-7
+#| fig-cap: Venn diagram for the promoters present in 2022 splicing measurements and the 2023 transcription  measurements. The 2022 dataset is the sequencing of the selected cells, previous to any enrichment in the expression of the reporter. 
+presort_2022<-read_tsv("External_data/2022_presort_counts.tsv")
+x=list("2022"=presort_2022%>%filter(original_count>0)%>%select(seqname)%>%as_vector(), "2023"=data_long%>%filter(counts>0)%>%select(seq_id)%>%unique()%>%as_vector())
+ggVennDiagram::ggVennDiagram(x)+scale_fill_gradient(low="white", high=clrs[6], trans="log10")+scale_color_manual(values=clrs[c(3,5)])
+```
+
+```{r}
+#| label: fig-8
+#| fig-cap: Association between the counts per promoter between the datasets from splicing reporter (2022) and transcription reporter (2023). The "original_count" dataset was made with the integrated cells from 2022; the "enrichment_count" was made after enriching those cells by the reporters' expression. Counts=0.5+counts
+
+x=data_long%>%group_by(seq_id)%>%summarise(sum_counts=sum(counts))%>%left_join(presort_2022, by=c("seq_id"="seqname"))
+
+cors=tibble(dataset_2022=c("enrichment_count", "original_count"), cor=paste("Spearman correlation:",c(cor(x$sum_counts, x$enrichment_count, method = "spearman", use="complete.obs")%>%round(2), cor(x$sum_counts, x$original_count, method = "spearman", use="complete.obs")%>%round(2))))
+
+data_long%>%group_by(seq_id)%>%summarise(sum_counts=sum(counts))%>%left_join(presort_2022, by=c("seq_id"="seqname"))%>%pivot_longer(c("enrichment_count", "original_count"), names_to="dataset_2022", values_to="counts")%>%
+  ggplot(aes(counts+0.5, sum_counts+0.5))+facet_wrap(~dataset_2022)+scale_x_log10()+scale_y_log10()+geom_hex()+geom_smooth(col=clrs[2])+
+  xlab("2022 counts")+ylab("2023 counts")+xlab("2022 total counts")+scale_fill_gradient(low="white", high=clrs[1], trans="log10")+geom_text(data=cors, mapping=aes(x = 100, y = 5E5,label=cor),  size=3.5)
+
+
+```
+
+### Spike-Ins
+
+```{r}
+#| label: fig-9
+#| fig-cap: Counts for Spike-Ins, previous and after correction by library size. Shape of points and  linetype distinguish between replicates; colour indicate the corresponding Spike-In sequence. 
+
+spike_id=c("spikeIn_SV40", "spikeIn_CMVe", "spikeIn_CMVeMut")
+spikes=data_long%>%filter(seq_id%in%spike_id) %>% mutate(spike=ifelse(seq_id=="spikeIn_CMVeMut", "Spike-In 1",ifelse(seq_id=="spikeIn_SV40", "Spike-In 2", "Spike-In 3")))
+spikes%>%pivot_longer(cols=starts_with("counts"), names_to="Data", values_to="Counts")%>%
+  ggplot(aes(sample_rep, Counts, group=interaction(spike,rep), col=spike, shape=rep, linetype=rep))+geom_point()+geom_smooth(method="lm")+scale_y_log10()+facet_wrap(~Data)+xlab("Sample")+scale_color_manual(values=clrs[1:3])
+
+```
+
+```{r}
+#| label: fig-10
+#| fig-cap: Spike-In counts relative to spikeIn_SV40, for each replicate. The relationship between the Spike-In addition to the samples was 1:10:100. 
+spikes%>%filter(spike%in%c("Spike-In 2"))%>%
+  pivot_wider(names_from = "spike", values_from = "counts")%>%select(`Spike-In 2`, sample_rep)%>%
+  left_join(spikes,.)%>%mutate(rel_spike=counts/`Spike-In 2`) %>% 
+  ggplot(aes(as_factor(as.numeric(sample)), rel_spike, col=spike, group=spike))+
+  geom_point(size=2)+geom_smooth(method="lm", se=F, linewidth=0.5)+scale_y_log10(labels=scales::label_number(), breaks=10^(-2:2))+scale_color_manual(values=clrs[1:3])+facet_wrap(~rep)+ylab("Relative counts")+xlab("Sample")+labs(col="Spike")+theme(text=element_text(size=15))
+```
+
+### Correlation between replicates (total counts)
+
+```{r}
+#| label: fig-12
+#| fig-cap: Correlation between replicates in the total number of raw (right) and corrected (left) counts per sequence. 
+
+x=data_long%>%group_by(seq_id,rep)%>%summarise(counts_prom=sum(counts))%>%
+  pivot_wider(names_from = rep, values_from = counts_prom)
+corr=cor(x$`Rep 1`, x$`Rep 2`, method="spearman")%>%round(2)
+p1=x%>%
+  ggplot(aes(`Rep 1`+0.5,`Rep 2`+0.5))+
+  geom_hex(bins=128)+
+  geom_smooth(alpha=0.7, col=clrs[4], method = "lm")+
+  scale_x_log10()+scale_y_log10()+
+  geom_abline(linetype="dashed")+
+  scale_fill_gradient(low=clrs[2], high=clrs[7], trans="log10")+
+  ggtitle("Counts per promoter", paste("Spearman correlation:", corr))+
+  xlab("Pseudocounts per sequence (Rep 1)")+ylab("Counts per sequence (Rep 2)")
+
+x=data_long%>%group_by(seq_id,rep)%>%summarise(counts_prom=sum(counts_norm_libsize))%>%
+  pivot_wider(names_from = rep, values_from = counts_prom)
+corr=cor(x$`Rep 1`, x$`Rep 2`, method="spearman")%>%round(2)
+p2=x%>%
+  ggplot(aes(`Rep 1`+0.5,`Rep 2`+0.5))+
+  geom_hex(bins=128)+
+  geom_smooth(alpha=0.7, col=clrs[4], method = "lm")+
+  scale_x_log10()+scale_y_log10()+
+  geom_abline(linetype="dashed")+
+  scale_fill_gradient(low=clrs[2], high=clrs[7], trans="log10")+
+  ggtitle("Counts per promoter \n(Library size corrected)", paste("Spearman correlation:", corr))+
+  xlab("Pseudocounts per sequence (Rep 1)")+ylab("Counts per sequence (Rep 2)")
+
+p1+p2
+```
+
+### Sampling effort
+
+```{r}
+#| label: fig-13
+#| fig-cap: Relativization factor for each Gate/sample (independent of the replicate). 
+
+perc_cells=tibble(sample=factor(1:6), perc=c(14.59,8.87,6.04,3.09, 1.41, 1.03))
+perc_cells$perc=perc_cells$perc/sum(perc_cells$perc)
+perc_cells$rel_factor=perc_cells$perc/min(perc_cells$perc)
+perc_cells%>%ggplot(aes(sample, perc))+geom_col(fill=clrs[2])+xlab("Gate")+ylab("Sample effort relativization factor")
+```
+
+```{r}
+data_long=data_long%>%left_join(perc_cells, by="sample")%>%mutate(counts_norm=counts_norm_libsize*rel_factor)
+# data_sum=data_long%>%group_by(seq_id,sample)%>%
+#   summarise(counts_norm=sum(counts_norm), counts_norm_libsize=sum(counts_norm_libsize), counts=sum(counts))%>%mutate(rep=factor("1+2"))
+# data_long=rbind(data_long%>%select(-c(sumCounts,perc, sample_rep, rel_factor)), data_sum)
+data_long=data_long%>%select(-c(sumCounts,perc, sample_rep, rel_factor))
+```
+
+$$
+F_{k}=\frac{a_k}{min(a)} \\
+a_k=\frac{p_k}{\sum_j{p_j}}
+$$
+
+where $F$ is the relativization factor, $p$ is the proportion of cells in each gate during the sorting and $k$ is the Gate.
+
+$$
+X''_{ik}=X'_{ik}/F_k
+$$
+
+### Descriptive statistics
+
+Statistics were only calculated for sequences with 10 or more raw counts.
+
+```{r}
+get_stats<-function(df,col_counts){
+  if(!all(df[[col_counts]]==0)){
+  k<-sum(df[[col_counts]]!=0)
+  df$sample<-as.numeric(df$sample)
+  a<-sum(df[[col_counts]])
+  vctr<-map(1:length(unique(df$sample)), ~rep(df$sample[.x],times=df[[col_counts]][.x]))%>%list_c()
+  mean=mean(vctr)
+  median=median(vctr)
+  mode<-df$sample[which.max(df[[col_counts]])]
+  var<-var(vctr)
+  cv2<-(sd(vctr)/mean(vctr))^2
+  fano_factor<-var(vctr)/mean(vctr)
+  sum=a
+  b<-df%>%arrange(desc(.data[[col_counts]]))%>%mutate(gate=as.numeric(sample))
+  #binome<-binome(vctr)
+  #if(k!=6){
+  #  vctr<-c(vctr,seq(1,6)[!seq(1,6)%in%df$sample])
+  #  a=sum(a, 6-length(unique(df$sample)))}
+  if(k==1){
+    extropy=0
+    entropy=0}else{
+    extropy=(-1/((k-1)*log(k/(k-1))))*sum((1-df[[col_counts]]/a)*log(1-df[[col_counts]]/a))
+    df=df[df[[col_counts]]!=0,]
+    entropy=(-1/log(6))*sum((df[[col_counts]]/a)*log(df[[col_counts]]/a))
+  }
+  return(data.frame(seq_id=unique(df$seq_id),positive_gates=k,mean,median, mode,var,cv2,fano_factor,  entropy, extropy))
+  }}
+
+stats_rep1=data_long%>%filter(rep=="Rep 1")%>%group_split(seq_id)%>%map(~get_stats(.x, "counts_norm"))%>%list_rbind() %>% mutate(rep="Rep 1")
+stats_rep2=data_long%>%filter(rep=="Rep 2")%>%group_split(seq_id)%>%map(~get_stats(.x, "counts_norm"))%>%list_rbind()%>% mutate(rep="Rep 2")
+
+stats=bind_rows(stats_rep1, stats_rep2)
+stats=data_long%>%group_by(seq_id, rep)%>%summarise(sum_counts=sum(counts), sum_norm_counts_lib=sum(counts_norm_libsize), sum_norm_counts=sum(counts_norm))%>%left_join(stats,.,by=c("seq_id","rep"))
+write_tsv(stats, "Analysis/Tables/stats.tsv")
+full_stats=stats
+stats=stats%>%filter(sum_counts>=100)
+```
+
+```{r}
+#| label: fig-14
+#| fig-cap: Distribution of values for entropy, mean and variance, in each replicate and in the merge of them. 
+stats%>%mutate(mean=mean+1)%>%select(mean, var, entropy, rep, seq_id, sum_counts)%>%pivot_longer(c(mean, var, entropy), values_to = "val", names_to="var")%>%
+  ggplot(aes(val, col=rep))+geom_density()+scale_color_manual(values = clrs[1:2])+facet_wrap(~var, scale="free")+xlab("")
+```
+
+```{r}
+#| label: fig-15
+#| fig-cap: Distribution of the median, mode and the number of positive gates, in each replicate and in the merge of them. 
+stats%>%mutate(positive_gates=positive_gates-1)%>%
+  select(median, mode, positive_gates,rep, seq_id)%>%
+  pivot_longer(c(median,mode,positive_gates), values_to = "val", names_to="var")%>%
+  ggplot(aes(factor(floor(val+1)), fill=rep))+
+  geom_histogram(stat="count",position="dodge")+
+  scale_fill_manual(values = clrs[1:2])+
+  facet_wrap(~var)+xlab("")
+
+```
+
+```{r}
+#| label: fig-sankey1
+#| fig-cap: "Sankey plot for the correpsondance of medians between both replicates"
+
+stats%>%filter(sum_norm_counts>1000)%>%select(seq_id, rep,median)%>%mutate(median=floor(median))%>%pivot_wider(names_from = "rep", values_from = "median")%>%
+  make_long(rep_1,rep_3)%>%
+  ggplot(aes(x = x, 
+             next_x = next_x, 
+             node = node, 
+             next_node = next_node,
+             fill = factor(node),
+             label = node)) +
+  geom_sankey(flow.alpha = 0.5, node.color = 1) +
+  geom_sankey_label(size = 3.5, color = 1, fill = "white") +
+  scale_fill_viridis_d()+
+  theme_sankey(base_size = 16)+xlab("")+labs(fill="Median")
+```

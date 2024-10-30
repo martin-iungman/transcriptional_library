@@ -1,0 +1,368 @@
+---
+title: "Library Preprocessing"
+params:
+  write: FALSE
+---
+
+```{r}
+#| code-summary: Libraries
+library(rtracklayer)
+library(plyranges)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(tidyverse)
+
+clrs=ghibli::ghibli_palette(name="PonyoMedium")
+theme_set(theme_bw())
+```
+
+### Objective
+
+The main aim of this report is to order and have a record of the scripts used to integrate all the information about the library sequences. This includes the list of IDs, its class and associated gene.
+
+### Obtain the sequence ID from the FASTA
+
+#### Bash
+
+Firstly, we have the file promoters.fa. If we want to extract the IDs from each sequence in the FASTA and store them in a file *seq_id.txt*:
+
+```{bash}
+#| eval: false
+grep -o -E "^>\w+.*$" Library_data/data/promoters.fa | tr -d "^>" > Library_data/res/seq_id.txt
+```
+
+The lines with the IDs start with "\>", followed by the ID. Therefore, the code starts by looking for (using a regex pattern, indicated with *-E*) *all the lines starting with \>, followed by an alphabetic sequence and "whatever" until the end of the line.* It prints implicitelly just the matching sequences (*-o*) and then the *tr* removes (*-d*) the "\>". Finally it is stored in a file.
+
+We shoul expect 24000 lines.
+
+```{bash}
+head -n 5 Library_data/res/seq_id.txt
+```
+
+```{bash}
+prom_id_nrow=$(wc -l Library_data/res/seq_id.txt | awk '{print $1}' )
+echo "The number of IDs are $prom_id_nrow"
+```
+
+#### **R**
+
+In R:
+
+As we know that after the ID the next line is the sequence, we know that odd lines are the IDs and the even ones are the sequences.
+
+```{r}
+fasta_file=readLines("Library_data/data/promoters.fa")
+fasta_id=fasta_file[(1:length(fasta_file))%%2==1]%>%str_remove("^>")
+fasta=fasta_file[(1:length(fasta_file))%%2==0]
+writeLines(fasta_id, "Library_data/res/seq_id.txt")
+```
+
+### Find the sequence for a given ID (or vice versa)
+
+To look for the DNA sequence, given an ID (or part of it):
+
+```{bash}
+grep -E -A1 "MEGF6_1" Library_data/data/promoters.fa 
+```
+
+To find the ID given the sequence (or part of it):
+
+```{bash}
+awk '/CAGATGGAAACGGATTGTAGCGAAGGCCAAAAGGAAAGAAGCAGCAAGCAGACTGGGTGTGTTAACAAGTCTGGGCCACTGCAGGAG/{print a $0}{a=$0 ORS}' Library_data/data/promoters.fa 
+```
+
+### Obtain the Gene Symbol for promoters (bash)
+
+Given the data in seq_id.txt, I remove the prefix FPXXXXXX\_. For type="promoter", the gene symbol is followed by an index, indicating the promoter, which also is removed.
+
+```{bash}
+#| code-summary: get_prom_symbol.sh
+#| eval: false
+sed -E "s/^FP[[:digit:]]{6}_//" Library_data/res/promoter_id.txt | grep -E "^[[:alnum:]]+_[[:digit:]]{1}$" > Library_data/res/promoter_id_symbol.txt
+```
+
+```{bash}
+head -n5 Library_data/res/promoter_id_symbol.txt
+prom_sym_nrow=$(wc -l Library_data/res/promoter_id_symbol.txt | awk '{print $1}')
+echo "The number of different gene symbols for promoters is $prom_sym_nrow"
+```
+
+### Obtain sequence class
+
+To obtain the class of the sequence (promoters, enhancers, cancer_wt or cancer_mut), I examine the pattern of the ID. The ones starting with ENSG are enhancers; cancer_wt ends with WT (sometimes with a final - or *);* cancer_mut contains rather the symbol \>, or MUT_chr, although most of them contains both; the others, are promoters.
+
+```{r}
+id_class=tibble(seq_id=fasta_id)%>%mutate(type=ifelse(grepl("^ENSG",seq_id),"enhancer",ifelse(grepl(">|MUT_chr",seq_id),"cancer_mut",ifelse(grepl("WT$|WT(_|-)",seq_id), "cancer_wt","promoter")
+)))
+write_tsv(id_class, "Library_data/res/seq_class.txt")
+ggplot(id_class,aes(type))+geom_bar(stat="count", fill=clrs[3])+xlab("Sequence type")
+
+```
+
+### Joining data
+
+Name of the sequence: Remove the initial FPXXXXXX\_, the -MUT and the -WT till the end of the string.
+
+Gene_symbol: just remove from the name the index of the promoter.
+
+```{r}
+seq_data<-id_class%>%mutate(name=str_remove(seq_id, "^FP[[:digit:]]{6}_")%>%str_remove("-MU.+$")%>%str_remove("-WT")%>%str_remove("_$"),
+                            gene_sym=ifelse(type%in%c("promoter", "cancer_wt", "cancer_mut"), 
+                                            str_remove(name, "_[[:digit:]]{1}$"), NA))
+n_prom<-seq_data%>%filter(type=="promoter")%>%count(gene_sym)
+seq_data<-left_join(seq_data, n_prom)
+write_tsv(seq_data, "Library_data/res/seq_data.tsv")
+```
+
+### Alternative promoters
+
+```{r}
+n_prom%>%head()
+n_prom%>%ggplot(aes(n_prom))+geom_histogram(fill=clrs[3])+
+  scale_x_continuous(breaks= scales::pretty_breaks())+xlab("Number of alternative promoters per gene in the library")+ylab("Number of genes")+ggtitle("Promotores alternativos", subtitle = paste("Total number of genes:", n_prom%>%nrow()))
+```
+
+### Mutated positions
+
+In order to get the relative position of the mutation of the cancer_mut dataset in the FASTA, I compared each of the mutated sequences with the WT ones. The output is written in mutation_position.tsv.
+
+```{r}
+fasta_df=tibble(seq_id=fasta_id, seq=fasta)
+cancer=seq_data%>%filter(type%in%c("cancer_wt","cancer_mut"))
+cancer_df=left_join(cancer,fasta_df)%>%group_by(name)%>%mutate(n=n())%>%filter(n>1)
+
+mut_pos=function(df){
+  seq_wt=(df%>%filter(type=="cancer_wt"))$seq
+  df=df%>%filter(type=="cancer_mut")
+  res=data.frame("id"=NA, "pos"=NA)
+  for(i in 1:nrow(df)){
+    seq_mut=df$seq[i]
+    id=df$seq_id[i]
+    pos=map(1:252, ~(seq_wt%>%str_split(""))[[1]][[.x]]!=(seq_mut%>%str_split(""))[[1]][[.x]])%>%list_c()%>%which()
+    pos=ifelse(length(pos)>1, NA, pos)
+    res[i,]=c(id,pos)
+  }
+  return(res)
+}
+
+mutation_pos=cancer_df%>%group_split(name)%>%map(.,mut_pos)%>%list_rbind()
+write_tsv(mutation_pos, "Library_data/mutation_position.tsv")
+
+mutation_pos%>%ggplot(aes(as.numeric(pos)))+geom_density()+xlab("Relative position")
+```
+
+### Genomic positions
+
+#### Promoters
+
+Download the EPD database for hg38 (a bed file with the TSS). Filter the IDs in the library and expand it.
+
+```{r}
+EPD_df=read_tsv("External_data/EPD/human38_epdnew.bed", col_names = c("seqnames","start","end", "name", "score", "strand"))%>%select(-score)%>%mutate(start=start+1)
+EPD_df=seq_data%>%filter(type=="promoter")%>%inner_join(EPD_df, ., by="name")
+EPD=as_granges(EPD_df)
+promoters_gr=EPD%>%promoters(upstream=236, downstream=16)
+promoters_gr$seq=getSeq(Hsapiens, promoters_gr)%>%as.character()
+```
+
+Checking that the referred sequences match with the FASTA
+
+```{r}
+names(fasta)=fasta_id
+fasta_list=fasta[promoters_gr$seq_id]
+promoters_gr$fasta=fasta_list
+
+orig=which(!promoters_gr$seq==promoters_gr$fasta)
+sum=0
+for(i in orig){
+    for(j in c(1,-1,2,-2)){
+      
+      test=(getSeq(Hsapiens,promoters_gr[i,]%>%shift(j))%>%as.character())==promoters_gr$fasta[i]
+      if(test){
+            sum=sum+1
+            promoters_gr[i,]=promoters_gr[i,]%>%shift(j)
+            print(paste(i, "shift", j))
+            break
+      }
+    }
+}  
+if(sum==0){print("All sequences matches perfectly. No shifts made")}
+  
+promotores_gr=promoters_gr[,-6]
+```
+
+The only unmatched case is FP014534_IPMK_1, just because the reference genome has an N in position 188 (where the library has a C).
+
+#### Cancer
+
+For the ones starting with FPXXXXXX, trim the -WT and search them among the EPD promoters. Those are duplicates.
+
+```{r}
+cancer_epd<-seq_data$seq_id[seq_data$type=="cancer_wt" & str_detect(seq_data$seq_id,"^FP[[:digit:]]{6}_")]
+cancer_epd_sym<-cancer_epd%>%str_remove("-WT")%>%str_remove("_$")%>%str_remove("^FP[[:digit:]]{6}_")
+cancer_dupl_df=as_tibble(values(EPD))%>%inner_join(tibble(name=cancer_epd_sym, dupl_id=cancer_epd))
+if(params$write) {cancer_dupl_df%>%write_tsv("Library_data/res/duplicated_prom_cancer.tsv")}
+```
+
+Create a new FASTA just with the sequences of the others cancer_wt, and store the IDs in a tsv file
+
+```{r}
+cancer_ids<-seq_data$seq_id[seq_data$type=="cancer_wt"]
+if(params$write) {cancer_ids[!seq_data$name[seq_data$type=="cancer_wt"]%in%cancer_dupl_df$name]%>%as_tibble()%>%write_tsv("Library_data/res/cancer_ids.txt")}
+```
+
+Finally, extract the IDs, plus the next line (`-A1`), without separator between searches (`--no-group-separator` ) and use the saved IDs as `pattern` (indicating with `-f` that is a file). Store the FASTA in cancer_wt.fa.
+
+```{bash}
+#| eval: false
+grep -E -A1 --no-group-separator -f Library_data/res/cancer_ids.txt Library_data/data/promoters.fa > Library_data/res/cancer_wt.fa
+head Library_data/res/cancer_wt.fa
+```
+
+Afterwards, align to the genome GRCh38.p14 with BLASTN, removing non-canonical chromosomes. The path for the genome are referred to the server. So the `query` is cancer_wt.fa and the subject is the human genome. I ask for the best target and the best match within the target.
+
+```{bash}
+#| eval: false
+awk '{ if ((NR>1)&&($0~/^>/)) { printf("\n%s", $0); } else if (NR==1) { printf("%s", $0); } else { printf("\t%s", $0); } }' ../../../open_access/genomes/GCF_000001405.40_GRCh38.p14_genomic.fna | grep -E "^>NC" | tr "\t" "\n" > ../../../open_access/genomes/GRCh38.p14_canonical.fa
+```
+
+```{bash}
+#| eval: false
+blastn -query ../../Library_data/res/cancer_wt.fa  -subject ../../../open_access/genomes/GRCh38.p14_canonical.fa -out ../../Library_data/res/cancer_wt_blast.txt -outfmt 6 -max_hsps 1 -max_target_seqs 1
+```
+
+With the Blast output I create the bed file.
+
+For that:
+
+-   Covert from 1-based range (blast) to 0-based range (bed)
+
+-   Indicate the strand, by wether the start is higher or lower than the end.
+
+-   Update the start and end in order that they would be arranged.
+
+-   Create chromosome seqnames by their IDs: removing the initial NC_0000 or NC_00000 and the final .XX
+
+```{r}
+blast<-read_tsv("Library_data/res/cancer_wt_blast.txt",col_names = c("qaccver", "saccver", "pident", "length", "mismatch", "gapopen", "qstart", "qend", "sstart", "send","evalue", "bitscore"))
+
+blast<-blast%>%select(qaccver,saccver, sstart,send)%>%
+  mutate(strand=ifelse(sstart<send,"+","-"),
+         start=ifelse(sstart<send,sstart-1,send-1),
+         end=ifelse(sstart<send,send,sstart))
+
+blast$seqname=str_remove(blast$saccver, "NC_0{4,}")%>%str_remove("\\..+")%>%paste0("chr",.)%>%str_replace("23","X") #there is a gene with the seqname chr23, while it is actually located in X
+
+cancer_gr=GRanges(seqnames = blast$seqname, ranges=IRanges(start=blast$start+1,end=blast$end),seq_id = blast$qaccver, strand=blast$strand)
+cancer_gr$name=cancer_gr$seq_id%>%str_remove("-WT")%>%str_remove("_$")
+cancer_gr$gene_sym=cancer_gr$name
+```
+
+#### Enhancers
+
+The file containing the genomic positions of enhancers, doesn't match the names perfectly to those in the FASTA. Moreover, there are sequences that are not in the library FASTA. Therefore, a search for a complete match between the sequence referred in the bed file and the one in the FASTA is made. The GRange is finally updated with the correct seq_id and filtered.
+
+```{r}
+enhancers<-read_tsv("Library_data/data/enhancers_hek.bed", col_names = c("seqname","start","end", "ID","score","strand","gene_sym"))%>%mutate(start=start+1)
+enhancers_gr<-GRanges(enhancers$seqname, IRanges(enhancers$start,enhancers$end), strand = enhancers$strand, name=enhancers$ID, gene_sym=enhancers$gene_sym)
+
+enhancers_gr$seq=getSeq(Hsapiens, enhancers_gr)%>%as.character()
+fasta_enh=str_trunc(fasta[grep("ENSG",fasta_id )], 152, "right","") #the FASTAs contain also a 100pb basal promoter
+names(fasta_enh)=fasta_id[grep("ENSG",fasta_id )]
+
+for(i in 1:length(enhancers_gr)){
+  a=names(fasta_enh)[grep(enhancers_gr$seq[i], fasta_enh)]
+  if(length(a)>0){
+    enhancers_gr$name2[i]=a
+  }else{
+    enhancers_gr$name2[i]=NA
+  }
+}
+
+print(paste(sum(is.na(enhancers_gr$name2)), "sequences removed")) #enhancers in the bed that are not in the fasta. They will be removed
+enhancers_gr=filter(enhancers_gr, !is.na(name2))
+enhancers_gr$name=NULL
+enhancers_gr$name=enhancers_gr$name2
+enhancers_gr$seq_id=enhancers_gr$name2
+enhancers_gr$name2=NULL
+```
+
+### Overlaps
+
+Join all the Granges (promoters, enhancers and cancer_wt), indicating the sequence class.
+
+```{r}
+gr=bind_ranges(promoters_gr, enhancers_gr,cancer_gr)
+gr$type=c(rep("promoter", length(promoters_gr)), rep("enhancer", length(enhancers_gr)),rep("cancer_wt", length(cancer_gr)))
+
+```
+
+Search and restrict the GRange to the overlaps (and filter out the auto-overlap). It is "directed" to make it strand-wise.
+
+Find those with a perfect match (252pb of overlap).
+
+```{r}
+intersection=join_overlap_intersect_directed(gr,gr)%>%filter(name.x!=name.y)%>%unique()
+full_intersect=intersection[width(intersection)==252]
+if(params$write){elementMetadata(full_intersect)%>%as_tibble()%>%select(-contains("score"))%>%write_tsv("../../Library_data/res/duplicated_prom_full_intersect.tsv")}
+full_intersect_df=tibble(seq_id=full_intersect$seq_id.x, name=full_intersect$name.x, dupl_id=full_intersect$seq_id.y)%>%inner_join(seq_data)
+intersection$width=width(intersection)
+if(params$write){export.bed(intersection,"../../Tables/intersection.bed")}
+
+tibble(overlap=width(intersection))%>%ggplot(aes(overlap))+geom_density(fill=clrs[3])
+```
+
+There are `r length(intersection)` pairs of sequences overlapped between each other.
+
+Among them, there are `r length(full_intersect)` identical pairs. These cases are relevant: we must unify data from these promoters in the previous experiment, and discard one of the IDs in the FASTA for the next ones. They are sites in the EPD database with double name, plus de "cancer-wt" that were already in the EPD database.
+
+Add the reference for the pair of duplicated IDs in seq_data.tsv.
+
+Remove the duplicated_ID from the FASTA and the bed files and export it.
+
+```{r}
+seq_data=bind_rows(cancer_dupl_df, full_intersect_df)%>%left_join(seq_data,.)
+write_tsv(seq_data, "Library_data/res/seq_data.tsv")
+
+# Export bed, cleaning duplicates
+gr$seq=NULL
+values(gr)=tibble(name=gr$seq_id)
+gr%>%filter(!name%in%full_intersect_df$dupl_id)%>%export.bed("../../Library_data/res/library.bed")
+
+### Clean FASTA from duplicates
+id_fasta_remove=grep(paste0(unique(seq_data$dupl_id)[-1],collapse="|"), fasta_file)
+id_fasta_remove=c(id_fasta_remove, id_fasta_remove+1) #With this I am removing the id and the next line (the sequence)
+writeLines(fasta_file[-id_fasta_remove], "Library_data/data/promoters_wo_dupl.fa")
+```
+
+### Spike-Ins
+
+For the 2023 experiment, three spike-ins were added. I add these sequences to the FASTA with the filtered library.
+
+```{r}
+spikein=readLines("Library_data/data/spike_in.fa")
+readLines("Library_data/data/promoters_wo_dupl.fa")%>%append(spikein)%>%writeLines("Library_data/data/promoters_wo_dupl_SpikeIns.fa")
+
+```
+
+### hg19 version
+
+Dado que los archivos de FANTOM5 necesarios para determinar la forma del promotor estan en hg19, es necesario tener una version de la libreria en esa version
+
+A modo provisorio, solo lo hago con type=promoter. Pero hay que hacerlos con la libreria entera.
+
+```{r}
+#| eval: false
+
+EPD_hg19=read_tsv("External_data/EPD_hg19.bed", col_names = c("seqnames","start","end", "name", "score", "strand"))%>%select(-score)
+EPD_hg19=seq_data%>%filter(type=="promoter")%>%inner_join(EPD_hg19, ., by=c("name"="prom_sym"))
+EPD_hg19=as_granges(EPD_hg19)
+promoters_hg19=EPD_hg19%>%promoters(upstream=236, downstream=16)
+export.bed(promoters_hg19, "Library_data/res/library_hg19_epd.bed")
+
+```
+
+```{r}
+if(params$write){write_tsv(prom_df,"../../Tables/prom_df.tsv")
+elementMetadata(gr)<-elementMetadata(gr)%>%as_tibble()%>%left_join(prom_shape, by="name")
+export.bed(gr, "../../Library_data/res/library.bed")}
+```
