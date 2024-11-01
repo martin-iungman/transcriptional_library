@@ -1,5 +1,6 @@
 ---
 title: "Data 2023 - Exploratory Analysis"
+execute-dir: "Data_processing"
 output-file: "data_processing.html"
 ---
 
@@ -12,7 +13,7 @@ library(patchwork)
 library(ggnewscale)
 library(wCorr)
 theme_set(theme_bw())
-files=list.files("Data_2023/Count_table/FASTP","counts_ampliconseq2023_f2_.-..tsv", full.names = T)
+#files=list.files("Data_2023/Count_table/FASTP","counts_ampliconseq2023_f2_.-..tsv", full.names = T)
 clrs=ghibli::ghibli_palette("PonyoMedium")[c(3,4,6,2,5,7,1)]
 clrs2=ghibli::ghibli_palette("PonyoLight")[c(3,4,6,2,5,7,1)]
 ```
@@ -28,7 +29,7 @@ clrs2=ghibli::ghibli_palette("PonyoLight")[c(3,4,6,2,5,7,1)]
 -   Ordered 25M reads per sample
 
 ```{r}
-QC=readODS::read_ods("Data_2023/QC_summary.ods", .name_repair = "universal")%>%filter(!is.na(id))
+QC=readODS::read_ods("Summary/QC_summary.ods", .name_repair = "universal")%>%filter(!is.na(id))
 data.table::data.table(QC)
 ```
 
@@ -88,28 +89,35 @@ For the next steps, the script were run in 12 parallel cores with
 #| eval: false
 #| code-summary: parallel
 
-parallel -j12 source filename.sh :::: tmp.txt
+parallel -j12 source scripts/filename.sh :::: tmp.txt
 
 ```
 
 3- Trim primers with *cutadapt*. Discard those reads lacking the primer.
+Then trim poly G tail with FASTP, along with quality trimming
 
 ```{bash}
 #| eval: false
 #| code-summary: trimming.sh
 fastq1="FASTQ/Gate-$1_R1.fastq.gz"
 fastq2="FASTQ/Gate-$1_R2.fastq.gz"
+temp1="Trimming/TEMP_trimmed_fastq_$1_R1.fastq"
+temp2="Trimming/TEMP_trimmed_fastq_$1_R2.fastq"
 trimmed1="Trimming/trimmed_fastq_$1_R1.fastq"
 trimmed2="Trimming/trimmed_fastq_$1_R2.fastq"
-trimmed_summary="Trimming/cutadapt_summary_$1.fastq"
-cutadapt -g  file:pcr_primers.fa -G file:pcr_primers.fa --discard-untrimmed -o $trimmed1 -p $trimmed2 $fastq1 $fastq2 --info-file $trimmed_summary
+cutadapt_summary="Summary/cutadapt_fastq_$1.txt"
+fastp_summary="Summary/fastp_fastq_$1.txt"
+html_fastp="Summary/fastp_report_$1.html"
+cutadapt -g  file:pcr_primers.fa -G file:pcr_primers.fa --discard-untrimmed -o $temp1 -p $temp2 $fastq1 $fastq2 > $cutadapt_summary
+echo "Cutadapt trimming done"
+fastp -i $temp1 -I $temp2 -o $trimmed1 -O $trimmed2 -q 20 --disable_adapter_trimming --cut_right --cut_right_window_size 3 --cut_right_mean_quality 20 --trim_poly_g poly_g_min_len 3 --dont_eval_duplication --html $html_fastp > $fastp_summary
+echo "FASTP trimming done"
+rm $temp1
+rm $temp2
+gzip $trimmed1
+gzip $trimmed2
 ```
 
-4- Quality Trimming with *fastp*
-
-```{r}
-#| eval: false
-```
 
 ### Alignment
 
@@ -118,7 +126,7 @@ cutadapt -g  file:pcr_primers.fa -G file:pcr_primers.fa --discard-untrimmed -o $
 ```{bash}
 #| eval: false
 #| code-summary: build-lib-index
-hisat2-build Library_data/data/promoter_wo_dupl_SpikeIns.fa library_index/library_idx
+hisat2-build ../Library_data/data/promoter_wo_dupl_SpikeIns.fa library_index/library_idx
 ```
 
 5- Align reads with *Hisat2.* Ignore the discordant matches. Only fragments with lengths between 230 and 270pb (`-I 230 -X 270`) (they should be exactly of 250pb, excepting the spikes, that range in 245-255). Convert the sam file to bam, excluding secondary reads (`-F 256`)
@@ -127,10 +135,10 @@ hisat2-build Library_data/data/promoter_wo_dupl_SpikeIns.fa library_index/librar
 #| eval: false
 #| code-summary: alignment.sh
 #corregir los tar
-trimmed1="Trimming/FASTP/trimmed_fastq_$1_R1.fastq"
-trimmed2="Trimming/FASTP/trimmed_fastq_$1_R2.fastq"
-sam_file="Alignment/FASTP/alignment_$1.sam"
-sam_summary_file="Alignment/FASTP/alignment_summary_$1.sam"
+trimmed1="Trimming/trimmed_fastq_$1_R1.fastq.gz"
+trimmed2="Trimming/trimmed_fastq_$1_R2.fastq.gz"
+sam_file="Alignment/alignment_$1.sam"
+sam_summary_file="Summary/alignment_summary_$1.sam"
 bam_file="Alignment/alignment_$1.bam"
 hisat2 --no-spliced-alignment -I 230 -X 270 --no-discordant -x library_index/library_idx -1 $trimmed1 -2 $trimmed2 -S $sam_file --summary-file $sam_summary_file
 samtools view -b -F 256 $sam_file > $bam_file
@@ -144,8 +152,8 @@ samtools view -b -F 256 $sam_file > $bam_file
 #| eval: false
 #| code-summary: bam_process.sh
 
-bam_file="Alignment/FASTP/alignment_$1.bam"
-sorted_file="Alignment/FASTP/alignment_sorted_$1.bam"
+bam_file="Alignment/alignment_$1.bam"
+sorted_file="Alignment/alignment_sorted_$1.bam"
 samtools sort -o $sorted_file $bam_file
 rm $bam_file
 samtools index $sorted_file

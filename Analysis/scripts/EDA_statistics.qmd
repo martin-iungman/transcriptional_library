@@ -282,3 +282,27 @@ stats%>%filter(sum_norm_counts>1000)%>%select(seq_id, rep,median)%>%mutate(media
   scale_fill_viridis_d()+
   theme_sankey(base_size = 16)+xlab("")+labs(fill="Median")
 ```
+
+#### \[G+C\] content bias
+
+```{r}
+#| label: fig-21
+#| fig-cap: Association between the GC content of the promoters and its representation in the dataset.
+
+corr=map(group_split(full_stats%>% inner_join(prom_df, by="seq_id"),rep),~cor((.x%>%filter(!seq_id%in%c(spike_id)))$sum_counts, (.x%>%filter(!seq_id%in%c(spike_id)))$g_c, method="spearman"))%>%list_c()
+corr_df=data.frame(rep=c("Rep 1", "Rep 2"), text=paste("Spearman correlation:", round(corr,2)))
+full_stats%>% inner_join(prom_df, by="seq_id")%>%filter(!seq_id%in%spike_id)%>%left_join(corr_df)%>%
+  ggplot(aes(sum_counts, g_c))+geom_hex(bins=64)+scale_x_log10()+geom_smooth(col=clrs[4])+scale_fill_gradient(low="white", high=clrs[5], trans="log10")+ylab("[G+C] content")+xlab("Total raw counts")+geom_text(data=corr_df, aes(x=3000,y=0.9,label=text), size=3)+
+  facet_wrap(~rep)#+ggtitle("", paste("Spearman correlation:", round(corr,2), collapse="     "))
+```
+
+```{r}
+#| label: fig-22
+#| fig-cap: "Proportion of the counts for each [GC] content. The outlier peak in rep1 correspond to a promoter with very high counts in Gate 2. "
+
+tmp=full_stats%>% inner_join(prom_df, by="seq_id")%>%filter(!seq_id%in%spike_id)
+tmp$bin_gc=as.numeric(cut_interval(tmp$g_c,length = 0.02, labels=seq(0.3,0.94,by=0.02)))
+tmp=tmp%>%group_by(bin_gc, rep)%>%summarise(sum=sum(sum_norm_counts), n=n())
+tmp=tmp%>%group_by(rep)%>%mutate(sum_rel=sum/sum(sum), n_rel=n/sum(n))%>%select(sum_rel,bin_gc,n_rel,rep)
+tmp%>%pivot_longer(c(sum_rel,n_rel), values_to = "counts", names_to = "data")%>%ggplot(aes(bin_gc, counts, col=data))+geom_line()+facet_wrap(~rep)+xlab("[G+C] content of aligned reads")+ylab("Proportion")+scale_color_manual(values=clrs[c(3,5)], labels=c("Expected", "Observed"))+theme(legend.title = element_blank(), legend.position = "bottom")
+```
