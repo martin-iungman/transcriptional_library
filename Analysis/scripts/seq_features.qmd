@@ -1,0 +1,168 @@
+---
+title: "Promoter features"
+author: "Martin Iungman"
+---
+
+Last update: `r Sys.Date()`
+
+```{r}
+#| code-summary: Settings
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(rtracklayer)
+library(tidyverse)
+library(furrr)
+library(patchwork)
+library(ggnewscale)
+theme_set(theme_bw())
+clrs=ghibli::ghibli_palette(name="PonyoMedium")
+clrs1=wesanderson::wes_palette(name="GrandBudapest1")
+clrs2=wesanderson::wes_palette(name="GrandBudapest2")
+```
+
+```{r}
+lib=rtracklayer::import.bed("Library_data/res/library.bed")
+dna<-getSeq(Hsapiens,lib)
+values(lib)=tibble(seq_id=lib$name)
+seq_data=read_tsv("Library_data/res/seq_data.tsv")
+prom_df=seq_data%>%filter(seq_id%in%lib$seq_id)
+```
+
+```{r}
+library("biomaRt")
+library("EnsDb.Hsapiens.v86")
+ensembl = useMart("ensembl",dataset="hsapiens_gene_ensembl")
+ids_df=getBM(attributes=c('ensembl_gene_id', 'hgnc_symbol', 'chromosome_name'), 
+      filters = 'hgnc_symbol', 
+      values = df$gene_sym, 
+      mart = ensembl)
+ids_df=ids_df %>% filter(chromosome_name%in%c(1:22,"X", "MT")) %>%unique()%>% group_by(hgnc_symbol) %>% filter(ensembl_gene_id==sample(ensembl_gene_id, 1)) %>% select(-chromosome_name)
+prom_df=left_join(prom_df, ids_df, by=c("gene_sym"="hgnc_symbol"))
+```
+
+### Chromosome
+
+```{r}
+prom_df=lib %>% as_tibble() %>% select(seq_id, seqnames)%>%left_join(df,.) %>% rename(chromosome=seqnames)
+df %>% ggplot(aes(chromosome))+geom_bar()
+```
+
+### G+C content
+
+```{r}
+G_C=Biostrings::oligonucleotideFrequency(dna,width=1, as.prob = T)[,c("C","G")]%>%rowSums()
+lib$g_c=round(G_C,3)
+df<-elementMetadata(lib)%>%as_tibble()%>%dplyr::select(seq_id,g_c)%>%left_join(df,.)
+```
+
+```{r}
+p1=df%>%ggplot(aes(g_c))+geom_density(fill=clrs[3])+xlab("[G+C]")
+p2=df%>%ggplot(aes(g_c, col=type))+geom_density()+scale_color_manual(values=clrs[c(2,4,6)])+xlab("G+C (%)")
+p1+p2
+```
+
+### CpG
+
+```{r}
+CpG=oligonucleotideFrequency(dna,width=2)[,c("CG","GC")]
+lib$CpG=round(rowSums(CpG)/width(lib),3)
+prom_df<-elementMetadata(lib)%>%as_tibble()%>%select(seq_id,CpG)%>%left_join(prom_df,.)
+```
+
+```{r}
+p1=prom_df%>%ggplot(aes(CpG))+geom_density(fill=clrs[3])
+p2=prom_df%>%ggplot(aes(CpG, col=type))+geom_density()+scale_color_manual(values=clrs[c(2,4,6)])+xlab("CpG (%)")
+p1+p2
+```
+
+### CpG Islands
+
+Downloaded from UCSC
+
+```{bash}
+#| eval: false
+#| code-summary: Download GCI
+wget -qO- http://hgdownload.cse.ucsc.edu/goldenpath/hg38/database/cpgIslandExt.txt.gz    | gunzip -c    | awk 'BEGIN{ OFS="\t"; }{ print $2, $3, $4, $5$6, $7, $8, $9, $10, $11, $12 }'   > External_data/cpgIslandExt.hg38.bed
+
+```
+
+```{r}
+cgi_df=read_tsv("External_data/cpgIslandExt.hg38.bed", col_names = c("seqname", "start","end", "cgi_name", "length", "cpgNum","gcNum","perCpG", "perGC", "obsExp")) 
+cgi_lib=GRanges(cgi_df)
+print(paste("There are",sum(countOverlaps( cgi_lib, lib)>1),"CGI that overlap more than one promoter"))
+cgi_lib=plyranges::join_overlap_left(cgi_lib,lib)
+cgi_lib_inner=plyranges::join_overlap_intersect(lib,cgi_lib)
+cgi_lib_inner$width_cgi_overlap=width(cgi_lib_inner)
+prom_df=prom_df %>% left_join(as_tibble(cgi_lib_inner) %>% select(seq_id, width_cgi_overlap)) %>% mutate(width_cgi_overlap=replace_na(width_cgi_overlap,0)) %>% group_by(seq_id) %>% mutate(width_cgi_overlap=sum(width_cgi_overlap)) %>% unique() %>% mutate(CGI=width_cgi_overlap>100)
+```
+
+```{r}
+ggplot()+geom_density(data=as_tibble(cgi_lib), aes(length, col="All CGI"))+geom_density(data=as_tibble(cgi_lib_inner), mapping=aes(x=length, col="Library overlapping CGI"))+scale_x_log10()+xlab("CGI length (min 200pb)")+labs(legend="")+scale_color_manual(values = c("All CGI"=clrs[2], "Library overlapping CGI"=clrs[3]))
+```
+
+```{r}
+ggplot(prom_df)+geom_density(aes(width_cgi_overlap), fill=clrs[3])+xlab("CGI-promoter overlap (pb)")
+```
+
+### EPD features
+
+Just for EPD promoters: TATA-box, INR and CCAAT
+
+Download [EPD](https://epd.epfl.ch/EPDnew_select.php) subsets and find which promoter names are in the library.
+
+![](../../Images/paste-4B130259.png){width="352"}
+
+![](../../Images/paste-9CDB619F.png){width="332"}
+
+```{r}
+tata_epd=import.bed("External_data/human38_epd_TATA.bed")
+df=df%>%
+  mutate(TATA_EPD=ifelse(type=="promoter",ifelse(name%in%tata_epd$name, T,F),NA))
+
+inr_epd=import.bed("External_data/human38_epd_INR.bed")
+df=df%>%mutate(INR_EPD=ifelse(type=="promoter",ifelse(name%in%inr_epd$name, T,F),NA))
+
+ccaat_epd=import.bed("External_data/human38_epd_CCAAT.bed")
+df=df%>%mutate(CCAAT_EPD=ifelse(type=="promoter",ifelse(name%in%ccaat_epd$name, T,F),NA))
+
+gc_epd=rtracklayer::import.bed("External_data/human38_epd_GCbox.bed")
+df=df%>%mutate(GCbox_EPD=ifelse(type=="promoter",ifelse(name%in%gc_epd$name, T,F),NA))
+
+```
+
+### TSS motif
+
+```{r}
+tss_seq=lib%>% subset(width==252)%>% getSeq(Hsapiens,.) %>% as.character() %>% str_extract(".{18}$") %>% str_extract("^.{5}")
+tss_df=tibble(seq_id=(lib%>% subset(width==252))$name, 
+              seq=tss_seq, 
+              INR_strong_TSS=str_detect(seq, "(T|C)CA(G|C)(T|A)"), 
+              TCT_TSS=str_detect(seq, ".(T|C)(C|G)(T|C)(C|T)"), 
+              CA_TSS=str_detect(seq, ".CA.."), 
+              CG_TSS=str_detect(seq, ".CG.."), 
+              TA_TSS=str_detect(seq, ".TA.."), 
+              TG_TSS=str_detect(seq, ".TG.."),
+              #GC_TSS=str_detect(seq, ".GC.."),
+              PyPu_TSS=str_detect(seq, ".(C|T)(A|G).."),
+              other_TSS=INR_strong_TSS+TCT_TSS+CA_TSS+CG_TSS+TA_TSS+TG_TSS+INR_weak_TSS==0)
+
+tss_df %>% mutate(dinucleotide=str_sub(seq, start=2,end = 3)) %>% ggplot(aes(dinucleotide %>% fct_infreq()))+geom_bar()+xlab("TSS dinucleotide")
+prom_df %>% left_join(tss_df) %>% pivot_longer(ends_with("TSS"), names_to = "motif", values_to = "presence") %>% mutate(motif=str_remove(motif, "_TSS"))%>% ggplot(aes(motif, fill=presence))+geom_bar()
+prom_df %>% left_join(tss_df) %>% pivot_longer(ends_with("TSS"), names_to = "motif", values_to = "presence") %>% ggplot(aes(fill=presence, x=CGI))+geom_bar(position = "fill")+facet_wrap(~motif)
+prom_df %>% left_join(tss_df) %>% pivot_longer(ends_with("TSS"), names_to = "motif", values_to = "presence") %>% ggplot(aes(fill=presence, x=prom_index_g))+geom_bar(position = "fill")+facet_wrap(~motif)
+```
+
+### PhyloP score
+
+```{r}
+phylo100=import.bed("External_data/hg38.phyloP100way_summary_lib.bed")%>%sort()
+lib=sort(lib)
+lib$phylo100=as.numeric(phylo100$name)%>%round(4)
+df=tibble(seq_id=lib$seq_id, phylo100=lib$phylo100, phylo17=lib$phylo17, phastcons100=lib$phastcons100)%>%left_join(df,., by="seq_id")
+
+df%>%ggplot(aes(phylo100, col=type))+geom_density()
+```
+
+```{r}
+phylo1pb=rtracklayer::import.bed("Tables/phyloP/hg38.phyloP100way_summary_lib_1bp.bed")
+
+```
