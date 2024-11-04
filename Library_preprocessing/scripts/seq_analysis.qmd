@@ -366,3 +366,12 @@ if(params$write){write_tsv(prom_df,"../../Tables/prom_df.tsv")
 elementMetadata(gr)<-elementMetadata(gr)%>%as_tibble()%>%left_join(prom_shape, by="name")
 export.bed(gr, "../../Library_data/res/library.bed")}
 ```
+
+### 1bp Library file
+
+For phyloP analysis
+
+```{r}
+gp <- GPos(lib)
+plyranges::join_overlap_inner(gp,lib)%>%export.bed("../../Library_data/res/1bp_library.bed")
+```
