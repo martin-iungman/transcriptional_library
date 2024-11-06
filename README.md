@@ -35,12 +35,3 @@ Some bash script to assist in the creation of Library_data/res files
 - <b>phyloP_lib.sh</b>: multiBigwigSummary to convert from .BW file to .BED file and restrict to the desired regions. Assigning phyloP score to the library.bed. 
 
 
-wget -O External_data/genome/GCF_000001405.40_GRCh38.p14_genomic.fna https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/GCF_000001405.40/download?include_annotation_type=GENOME_FASTA&include_annotation_type=GENOME_GFF&include_annotation_type=RNA_FASTA&include_annotation_type=CDS_FASTA&include_annotation_type=PROT_FASTA&include_annotation_type=SEQUENCE_REPORT&hydrated=FULLY_HYDRATED 
-
-awk '{ if ((NR>1)&&($0~/^>/)) { printf("\n%s", $0); } else if (NR==1) { printf("%s", $0); } else { printf("\t%s", $0); } }' External_data/genome/GCF_000001405.40_GRCh38.p14_genomic.fna | grep -E "^>NC" | tr "\t" "\n" > External_data/genome/GRCh38.p14_canonical.fa
-
-wget -qO- http://hgdownload.cse.ucsc.edu/goldenpath/hg38/database/cpgIslandExt.txt.gz    | gunzip -c    | awk 'BEGIN{ OFS="\t"; }{ print $2, $3, $4, $5$6, $7, $8, $9, $10, $11, $12 }'   > External_data/cpgIslandExt.hg38.bed
-
-wget -O External_data/hg38.phyloP100way.bw https://hgdownload.soe.ucsc.edu/goldenPath/hg38/phyloP100way/hg38.phyloP100way.bw 
-multiBigwigSummary BED-file -b /media/martin/SP\ B75\ Pro1/hg38.phyloP100way.bw -o hg38.phyloP100way_summary_lib.npz --BED Labo/splicing_noise/Library_data/res/library.bed --outRawCounts ~/Documents/Labo/splicing_noise/External_data/hg38.phyloP100way_summary_lib.bed
-

@@ -43,7 +43,7 @@ prom_df=left_join(prom_df, ids_df, by=c("gene_sym"="hgnc_symbol"))
 
 ```{r}
 prom_df=lib %>% as_tibble() %>% select(seq_id, seqnames)%>%left_join(df,.) %>% rename(chromosome=seqnames)
-df %>% ggplot(aes(chromosome))+geom_bar()
+prom_df %>% ggplot(aes(chromosome))+geom_bar()
 ```
 
 ### G+C content
@@ -51,12 +51,12 @@ df %>% ggplot(aes(chromosome))+geom_bar()
 ```{r}
 G_C=Biostrings::oligonucleotideFrequency(dna,width=1, as.prob = T)[,c("C","G")]%>%rowSums()
 lib$g_c=round(G_C,3)
-df<-elementMetadata(lib)%>%as_tibble()%>%dplyr::select(seq_id,g_c)%>%left_join(df,.)
+prom_df<-elementMetadata(lib)%>%as_tibble()%>%dplyr::select(seq_id,g_c)%>%left_join(prom_df,.)
 ```
 
 ```{r}
-p1=df%>%ggplot(aes(g_c))+geom_density(fill=clrs[3])+xlab("[G+C]")
-p2=df%>%ggplot(aes(g_c, col=type))+geom_density()+scale_color_manual(values=clrs[c(2,4,6)])+xlab("G+C (%)")
+p1=prom_df%>%ggplot(aes(g_c))+geom_density(fill=clrs[3])+xlab("[G+C]")
+p2=prom_df%>%ggplot(aes(g_c, col=type))+geom_density()+scale_color_manual(values=clrs[c(2,4,6)])+xlab("G+C (%)")
 p1+p2
 ```
 
@@ -115,17 +115,17 @@ Download [EPD](https://epd.epfl.ch/EPDnew_select.php) subsets and find which pro
 
 ```{r}
 tata_epd=import.bed("External_data/human38_epd_TATA.bed")
-df=df%>%
+prom_df=prom_df%>%
   mutate(TATA_EPD=ifelse(type=="promoter",ifelse(name%in%tata_epd$name, T,F),NA))
 
 inr_epd=import.bed("External_data/human38_epd_INR.bed")
-df=df%>%mutate(INR_EPD=ifelse(type=="promoter",ifelse(name%in%inr_epd$name, T,F),NA))
+prom_df=prom_df%>%mutate(INR_EPD=ifelse(type=="promoter",ifelse(name%in%inr_epd$name, T,F),NA))
 
 ccaat_epd=import.bed("External_data/human38_epd_CCAAT.bed")
-df=df%>%mutate(CCAAT_EPD=ifelse(type=="promoter",ifelse(name%in%ccaat_epd$name, T,F),NA))
+prom_df=prom_df%>%mutate(CCAAT_EPD=ifelse(type=="promoter",ifelse(name%in%ccaat_epd$name, T,F),NA))
 
 gc_epd=rtracklayer::import.bed("External_data/human38_epd_GCbox.bed")
-df=df%>%mutate(GCbox_EPD=ifelse(type=="promoter",ifelse(name%in%gc_epd$name, T,F),NA))
+prom_df=prom_df%>%mutate(GCbox_EPD=ifelse(type=="promoter",ifelse(name%in%gc_epd$name, T,F),NA))
 
 ```
 
@@ -153,16 +153,76 @@ prom_df %>% left_join(tss_df) %>% pivot_longer(ends_with("TSS"), names_to = "mot
 
 ### PhyloP score
 
+```{bash}
+eval: false
+multiBigwigSummary BED-file -b External_data/hg38.phyloP100way.bw -o hg38.phyloP100way_summary_lib.npz --BED Labo/splicing_noise/Library_data/res/library.bed --outRawCounts ~/Documents/Labo/splicing_noise/External_data/hg38.phyloP100way_summary_lib.bed
+
+multiBigwigSummary BED-file -b External_data/hg38.phyloP100way.bw -o hg38.phyloP100way_summary_lib_1bp.npz --BED Labo/splicing_noise/Library_data/res/1bp_library.bed --outRawCounts ~/Documents/Labo/splicing_noise/External_data/hg38.phyloP100way_summary_lib_1bp.bed
+```
+
 ```{r}
 phylo100=import.bed("External_data/hg38.phyloP100way_summary_lib.bed")%>%sort()
 lib=sort(lib)
 lib$phylo100=as.numeric(phylo100$name)%>%round(4)
 df=tibble(seq_id=lib$seq_id, phylo100=lib$phylo100, phylo17=lib$phylo17, phastcons100=lib$phastcons100)%>%left_join(df,., by="seq_id")
 
+range_sum_phylo=phylo1pb_prom_df %>% mutate(range=ifelse((relpos-16)<=50, "close", ifelse((relpos-16)<=150, "intermediate", "far"))) %>% group_by(name, range) %>% summarise(mean_range_phylo100=mean(score, na.rm=T))
+df=range_sum_phylo %>% pivot_wider(values_from = mean_range_phylo100, names_from = range, names_prefix = "phylop100_") %>% left_join(df,., by=c("seq_id"="name"))
+
 df%>%ggplot(aes(phylo100, col=type))+geom_density()
 ```
 
 ```{r}
 phylo1pb=rtracklayer::import.bed("Tables/phyloP/hg38.phyloP100way_summary_lib_1bp.bed")
+phylo1pb$score=phylo1pb$name
+phylo1pb$name=NULL
+phylo1pb=plyranges::join_overlap_inner(phylo1pb, lib)
+phylo1pb$score=phylo1pb$score.x
+phylo1pb$score.y=NULL
+phylo1pb$score.x=NULL
+phylo1pb_prom=subset(phylo1pb, str_detect(name, "^FP.{6}_"))
+lib_df=as_tibble(lib)
+names(lib_df)=paste0(names(lib_df), "_seq")
+values(phylo1pb_prom)=left_join(as_tibble(values(phylo1pb_prom)), lib_df, by=c("name"="name_seq"))
+strand(phylo1pb_prom)=phylo1pb_prom$strand_seq
+phylo1pb_prom$seq=getSeq(Hsapiens,phylo1pb_prom)
+phylo1pb_prom_df=unique(as_tibble(phylo1pb_prom)) %>% mutate(relpos=ifelse(strand_seq=="-", abs(start_seq-start), abs(start-end_seq)), score=as.numeric(score))
+ordered_names_phylo=phylo1pb_prom_df%>% group_by(name) %>% summarise(med_score=median(score)) %>% arrange(med_score)
+phylo1pb_prom_df %>% write_tsv("Tables/phylo100_1pb_lib.tsv")
+```
 
+```{r}
+ggplot(phylo1pb_prom_df, aes(relpos-16,factor(name, levels = ordered_names_phylo$name), fill=score))+geom_tile()+
+  scale_fill_gradient2(low =ghibli::ghibli_palette("PonyoMedium",7)[3], mid = "white", high=ghibli::ghibli_palette("PonyoMedium",7)[4] )+
+  theme(axis.text.y = element_blank())+xlab("Relative position to TSS")+ylab("Promoters")+labs(legend="PhyloP score")
+
+```
+
+```{r}
+phylo1pb_prom_df %>% group_by(relpos) %>% summarise(med_score=median(score, na.rm=T)) %>% ggplot(aes(relpos-16,med_score))+geom_line(linewidth=0.2)+xlab("Relative position to TSS")+ylab("Median PhyloP score")
+```
+
+```{r}
+phylo1pb_prom_df %>%  filter(seq!="N")%>% group_by(relpos, seq) %>% summarise(med_score=median(score, na.rm=T)) %>% ggplot(aes(relpos-16,med_score, col=seq))+geom_line(linewidth=0.2)+xlab("Relative position to TSS")+ylab("Median PhyloP score")
+```
+
+### Human-Mouse turnover functional conservation (Young 2015)
+
+```{r}
+
+epd_hg19=import.bed("External_data/EPD/EPD_hg19.bed")
+young=read_tsv("External_data/Sup1_mouse_human_Young2015.txt", skip=2, col_names = c("seqnames", "start", "end", "human_pos", "mouse_pos", "turnover"))
+young$strand=str_extract(young$human_pos, ".$")
+hg19_young_lib=epd_hg19 %>% subset(name%in%prom_df$name) %>% plyranges::join_overlap_left_directed(GRanges(young))
+na_proms=subset(hg19_young_lib, is.na(turnover))
+extra_proms=epd_hg19 %>% subset(name%in%na_proms$name ) %>% promoters(upstream = 235, downstream = 16)%>% plyranges::join_overlap_left_directed(GRanges(young)) %>% subset(!is.na(turnover)) %>% values() %>% as_tibble() %>% select(-human_pos, -mouse_pos) %>% unique() %>%add_count(name) %>% filter(n==1) %>% select(-n, -score)
+values(hg19_young_lib) %>% as_tibble() %>% filter(!is.na(turnover)) %>% select(-human_pos, -mouse_pos, -score) %>% bind_rows(extra_proms)->turnover_df
+
+prom_df=prom_df %>% left_join(turnover_df)
+
+ggplot(prom_df, aes(turnover))+geom_histogram(stat="count")
+```
+
+```{r}
+phylo1pb_prom_df %>% left_join(prom_df, by=c("name"="seq_id"))%>% group_by(relpos, turnover) %>% summarise(med_score=median(score, na.rm=T)) %>% ggplot(aes(relpos-15,med_score, col=turnover))+geom_line(linewidth=0.2)+xlab("Relative position to TSS")+ylab("Median PhyloP score")+geom_smooth()
 ```
