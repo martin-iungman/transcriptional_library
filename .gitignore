@@ -2,9 +2,10 @@
 .Rhistory
 .RData
 .Ruserdata
-Library_data
-!Library_data/bash_scripts/*
-External_data
+Library_data/*
+!Library_data/bash_scripts
+External_data/*
 !External_data/download_data.sh
 Data_processing/FASTQ
 Data_processing/Count_table
+Citometry/*
