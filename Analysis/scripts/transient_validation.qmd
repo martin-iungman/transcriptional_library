@@ -13,8 +13,9 @@ plot_hist=function(seq){
   a=gates_df%>%filter(seq_id==seq)
 b=a%>%group_by(rep)%>%summarise(across(contains("counts"), ~sum(.x)%>%floor()))
 p1=a%>%ggplot(aes(sample,counts))+geom_col()+facet_wrap(~rep, nrow=2)+ggtitle("Raw counts", subtitle = paste("Total counts: \n rep_1", b$counts[1], '\n rep_3', b$counts[2]))+xlab("Gate")+ylab("Counts")+theme(title = element_text(size=10))
-p2=a%>%ggplot(aes(sample,counts_norm_libsize))+geom_col()+facet_wrap(~rep,nrow=2)+ggtitle("Counts normalized \n by Libsize")#, subtitle = paste("Total counts: \n rep_1", b$counts_norm_libsize[1], '\n rep_3', b$counts_norm_libsize[2]))+xlab("Gate")+ylab("Counts")+theme(title = element_text(size=8))
-p3=a%>%ggplot(aes(sample,counts))+geom_col()+facet_wrap(~rep, nrow=2)+xlab("Gate")+ylab("Counts")+theme(title = element_text(size=8))+ggtitle("Counts normalized by \nLibsize and sampling effort")#, subtitle = paste("Total counts: \n rep_1", b$counts_norm[1], '\n rep_3', b$counts_norm[2]))
+p2=a%>%ggplot(aes(sample,counts_norm_libsize))+geom_col()+facet_wrap(~rep,nrow=2)+ggtitle("Counts normalized \n by Libsize")
+
+p3=a%>%ggplot(aes(sample,counts))+geom_col()+facet_wrap(~rep, nrow=2)+xlab("Gate")+ylab("Counts")+theme(title = element_text(size=8))+ggtitle("Counts normalized by \nLibsize and sampling effort")
 
 p1+p2+p3+plot_annotation(title = seq)
 }
@@ -33,7 +34,7 @@ max_mcherry=max(df$`Comp_mCherry_A`)
 ```
 
 ```{r}
-gates_df=read_tsv("Tables/noise/gates_counts_rep.tsv")%>%filter(rep!="1+3")%>%mutate(rep=paste0("Rep ",rep))
+gates_df=read_tsv("Tables/gates_counts.tsv")%>%filter(rep!="1+3")%>%mutate(rep=paste0("Rep ",rep))
 
 ```
 
@@ -98,23 +99,4 @@ ggplot() + geom_point(data=df_hist, aes(mean, mean_density, col=seq_id), size=2.
     geom_point(data=df_dens, aes(mean_hist, mean_EGFP, col=seq_id), size=2.5)+
     geom_line(data=df_dens, aes(mean_hist, mean_EGFP, col=seq_id), linewidth=1.5)+
     labs(x="Mean (Histogram)", y="Mean (Density)")+theme(text=element_text(size=20))+labs(col="Promoter")+scale_color_manual(values = clrs[1:6])
-```
-
-```{r}
-act_mean<- gates_df %>% filter(seq_id%in%c("FP022540_KIAA0753_1", "FP018243_BTG1_1", "FP016171_PPP1R14B_3", "FP018274_METAP2_1", "FP021573_ZKSCAN2_1", "FP020354_TMEM87A_1")) %>% 
-  mutate(a=counts_norm*sample) %>% 
-  group_by(rep,seq_id) %>% summarise(mean=(sum(a)/sum(counts_norm)-1)) %>% ungroup() %>% group_by(seq_id) %>%  mutate(mean_hist=mean(mean))
-name_df=tibble(prom_name=unique(df$prom_name), seq_id=c("FP018243_BTG1_1",NA,  "FP022540_KIAA0753_1", NA, "FP018274_METAP2_1", "FP016171_PPP1R14B_3", "FP020354_TMEM87A_1", NA,"FP021573_ZKSCAN2_1" ))
-
-density_mean<-df  %>% group_by(name, prom_name) %>% summarise(mean_EGFP=mean(Comp_EGFP_A), median_EGFP=median(Comp_EGFP_A)) %>% ungroup() %>%group_by(prom_name) %>% mutate(mean_density=mean(median_EGFP)) %>% left_join(name_df)
-
-act_mean %>% left_join(name_df) %>% left_join(density_mean) %>% ggplot(aes(mean_EGFP, mean))+geom_point(aes(col=prom_name))+geom_smooth(method="lm")+scale_x_log10()
-
-density_mean %>% select(mean_density, seq_id) %>% unique() %>% filter(!is.na(seq_id)) %>% left_join(act_mean) ->df_hist
-act_mean %>% select(mean_hist, seq_id) %>% unique() %>% left_join(density_mean)->df_dens
-ggplot() + geom_point(data=df_hist, aes(mean, mean_density, col=seq_id))+
-  geom_line(data=df_hist, aes(mean, mean_density, col=seq_id))+
-  geom_point(data=df_dens, aes(mean_hist, median_EGFP, col=seq_id))+
-  geom_line(data=df_dens, aes(mean_hist, median_EGFP, col=seq_id))+
-  labs(x="Mean (Histogram)", y="Median (Density)")
 ```
