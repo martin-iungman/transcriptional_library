@@ -14,5 +14,3 @@ p2=df_poster%>%filter(Rep=="rep_2")%>%
 p3=df_poster%>%filter(Rep=="rep_3")%>%
   ggplot(aes(Gate, FC, fill=Gate, col=Gate))+geom_line(linewidth=2)+geom_point(size=5)+geom_point(shape = 1,size=5,colour = "black")+ggtitle("Rep 2")+scale_y_log10()+geom_point()+ylab("")+rcartocolor::scale_color_carto_d(palette="Emrld")+theme(legend.position = "none", text=element_text(size=15))
 cowplot::plot_grid(p2,p3) #el posta
-
-

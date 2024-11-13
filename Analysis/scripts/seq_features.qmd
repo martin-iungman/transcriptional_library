@@ -42,7 +42,7 @@ prom_df=left_join(prom_df, ids_df, by=c("gene_sym"="hgnc_symbol"))
 ### Chromosome
 
 ```{r}
-prom_df=lib %>% as_tibble() %>% select(seq_id, seqnames)%>%left_join(df,.) %>% rename(chromosome=seqnames)
+prom_df=lib %>% as_tibble() %>% select(seq_id, seqnames)%>%left_join(prom_df,.) %>% rename(chromosome=seqnames)
 prom_df %>% ggplot(aes(chromosome))+geom_bar()
 ```
 
@@ -226,3 +226,14 @@ ggplot(prom_df, aes(turnover))+geom_histogram(stat="count")
 ```{r}
 phylo1pb_prom_df %>% left_join(prom_df, by=c("name"="seq_id"))%>% group_by(relpos, turnover) %>% summarise(med_score=median(score, na.rm=T)) %>% ggplot(aes(relpos-15,med_score, col=turnover))+geom_line(linewidth=0.2)+xlab("Relative position to TSS")+ylab("Median PhyloP score")+geom_smooth()
 ```
+
+### Cis Regulatory Modules (CRM) (from ChIP-seq)
+
+```{r} crm=read_tsv("Tables/library_remap_CRM.bed", col_names = c("seqnames", "start", "end", "seq_id", "score", "strand", "seqnames_peak", "start_peak",  "end_peak", "peak", "N_TF_CRM", "strand_peak", "thickstart_peak", "thickend_peak", "rgb")) prom_df %>% filter(type=="promoter")%>% left_join(crm) %>% mutate(`No peak`=is.na(seqnames_peak)) %>% count(`No peak`)}
+
+crm %>% ggplot(aes(N_TF_CRM)) +geom_density()+xlab("Number of non-redundant TF peaks") 
+
+prom_df=prom_df %>% left_join(crm %>% select(seq_id, N_TF_CRM), by="seq_id") %>% mutate(N_TF_CRM=replace_na(N_TF_CRM,0))
+```
+
+### 
