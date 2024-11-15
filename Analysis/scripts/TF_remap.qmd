@@ -8,6 +8,7 @@ library(ReactomePA)
 library(org.Hs.eg.db)
 library(tidyverse)
 library(coin)
+library(pROC)
 hs <- org.Hs.eg.db
 
 prom_df=read_tsv("Tables/prom_df.tsv")
