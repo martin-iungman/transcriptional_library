@@ -229,11 +229,37 @@ phylo1pb_prom_df %>% left_join(prom_df, by=c("name"="seq_id"))%>% group_by(relpo
 
 ### Cis Regulatory Modules (CRM) (from ChIP-seq)
 
-```{r} crm=read_tsv("Tables/library_remap_CRM.bed", col_names = c("seqnames", "start", "end", "seq_id", "score", "strand", "seqnames_peak", "start_peak",  "end_peak", "peak", "N_TF_CRM", "strand_peak", "thickstart_peak", "thickend_peak", "rgb")) prom_df %>% filter(type=="promoter")%>% left_join(crm) %>% mutate(`No peak`=is.na(seqnames_peak)) %>% count(`No peak`)}
+```{r}
+crm=read_tsv("Tables/library_remap_CRM.bed", col_names = c("seqnames", "start", "end", "seq_id", "score", "strand", "seqnames_peak", "start_peak",  "end_peak", "peak", "N_TF_CRM", "strand_peak", "thickstart_peak", "thickend_peak", "rgb")) prom_df %>% filter(type=="promoter")%>% left_join(crm) %>% mutate(`No peak`=is.na(seqnames_peak)) %>% count(`No peak`)
 
-crm %>% ggplot(aes(N_TF_CRM)) +geom_density()+xlab("Number of non-redundant TF peaks") 
+crm %>% ggplot(aes(N_TF_CRM)) +geom_density()+xlab("Number of non-redundant TF peaks")
 
 prom_df=prom_df %>% left_join(crm %>% select(seq_id, N_TF_CRM), by="seq_id") %>% mutate(N_TF_CRM=replace_na(N_TF_CRM,0))
 ```
 
-### 
+### Repeated Elements
+
+```{r}
+repeatmasker=read_delim("External_data/repeatMasker_hg38.txt", col_names = T,  delim = " ") %>% select(-strand)
+repeatmasker_gr=GRanges(repeatmasker) %>% plyranges::join_overlap_intersect(lib, .) %>% subset(width>10)
+
+dna_repeat<-getSeq(Hsapiens,repeatmasker_gr)
+G_C_repeat=Biostrings::oligonucleotideFrequency(dna_repeat,width=1, as.prob = T)[,c("C","G")]%>%rowSums()
+repeatmasker_gr$G_C_repeat=round(G_C_repeat,3)
+repeatmasker_df=repeatmasker_gr %>% as_tibble() %>% mutate(repeat_family=ifelse(repeat_class%in%c("Low_complexity", "Simple_repeat"), "LCR", "TE"), repeat_superclass=str_remove(repeat_class, "/.+$")) %>% dplyr::rename(repeat_overlap=width)
+
+repeatmasker %>% mutate(lib=ifelse(ID%in%repeatmasker_gr$ID, "Library", "Genome"), repeat_class=fct_infreq(repeat_class)%>% fct_lump_prop(prop =0.01)) %>% 
+  ggplot(aes(repeat_class, ..prop.., group=lib, fill=lib)) + 
+  geom_bar(position = "dodge")+theme(text=element_text(size=15), axis.text.x = element_text(angle=90))+labs(fill="")+xlab("Element class")+scale_fill_manual(values=clrs1[1:2])+ylab("Proportion")
+repeatmasker_df %>% ggplot(aes(fct_infreq(repeat_superclass)%>% fct_lump_prop(prop =0.01), fill=repeat_family)) + geom_bar()+xlab("Element superclass")
+
+repeatmasker %>% mutate(repeat_family=ifelse(repeat_class%in%c("Low_complexity", "Simple_repeat"), "LCR", "TE"), repeat_superclass=str_remove(repeat_class, "/.+$"))%>% mutate(lib=ifelse(ID%in%repeatmasker_gr$ID, "Promoters", "Genome"), repeat_superclass=fct_infreq(repeat_superclass)%>% fct_lump_prop(prop =0.01)) %>% 
+    ggplot(aes(repeat_superclass, ..prop.., group=lib, fill=lib)) + 
+    geom_bar(position = "dodge")+theme(text=element_text(size=15), axis.text.x = element_text(angle=90))+labs(fill="")+xlab("")+scale_fill_manual(values=clrs1[1:2])+ylab("Proportion")
+```
+
+```{r}
+LCR_df<-dplyr::filter(repeatmasker_df, repeat_family=="LCR") %>% select(seq_id,repeat_overlap,G_C_repeat, repeat_family) %>% group_by(seq_id)%>% summarise(LCR_overlap=sum(repeat_overlap), G_C_LCR=sum(G_C_repeat*repeat_overlap)/LCR_overlap)
+TE_df<-dplyr::filter(repeatmasker_df, repeat_family=="TE") %>% select(seq_id,repeat_overlap,G_C_repeat, repeat_family, repeat_superclass) %>% group_by(seq_id)%>% summarise(TE_overlap=sum(repeat_overlap), G_C_TE=sum(G_C_repeat*repeat_overlap)/TE_overlap, TE_superclass=unique(repeat_superclass)[[1]]) 
+prom_df=prom_df %>% left_join(LCR_df) %>% left_join(TE_df)%>% mutate(across(c(LCR_overlap,TE_overlap,G_C_TE,G_C_LCR),function(x)replace_na(x, 0)), TE_superclass=TE_superclass %>% fct_lump_min(100))
+```
