@@ -1,0 +1,208 @@
+---
+title: "Remap (TF)"
+---
+
+```{r}
+library(clusterProfiler)
+library(ReactomePA)
+library(org.Hs.eg.db)
+library(tidyverse)
+library(coin)
+hs <- org.Hs.eg.db
+
+prom_df=read_tsv("Tables/prom_df.tsv")
+data=read_tsv("Tables/full_data.tsv") #%>% mutate(median=ifelse(median%in%c(5,6), "5+6", median))
+```
+
+```{r}
+NESplot <- function(x, n = 20, cutoff = 0.05, title = NULL, ontology=c("CC","MF","BP")) {
+  x = x@result %>% arrange(desc(abs(NES))) %>% filter(ONTOLOGY%in%ontology)
+  if (nrow(x) > 20){
+    x = rbind(filter(x, NES > 0) %>% {if (nrow(.) >= n/2) head(., n/2) else .},
+              filter(x, NES < 0) %>% {if (nrow(.) >= n/2) head(., n/2) else .})
+  }
+  plot = ggplot(x, aes(x = NES, y = factor(Description, levels = Description[order(NES)]))) +
+    geom_bar(
+      fill = ifelse(x$p.adjust < cutoff,
+                    ifelse(x$NES < 0, "cornflowerblue", "salmon"),
+                    "dimgray"),
+      # alpha = ifelse(x$p.adjust < cutoff, 1 - x$p.adjust, 1),
+      stat = "identity", show.legend = FALSE
+    ) +
+    # geom_text(label = x$setSize, hjust = ifelse(x$NES < 0, 1.5, -0.5), size = 3) +
+    labs(y = "", title = title) + theme_linedraw() # +
+  # theme(panel.grid = element_blank())
+  return(plot)
+}
+```
+
+## Data processing
+
+```{r}
+nr=read_tsv("Tables/chipatlas_remap/library_remap_NR.bed", col_names = c("seqnames", "start", "end", "seq_id", "score", "strand", "seqnames_peak", "start_peak",  "end_peak", "sample", "N_tissue", "strand_peak", "thickstart_peak", "thickend_peak", "rgb"))
+nr=nr %>% separate(sample, into=c("TF", "sample"), sep=":")
+nr_N=nr %>% group_split(TF) %>% map(~tibble(TF=unique(.x$TF),N=nrow(.x))) %>% list_rbind()
+nr_N %>% ggplot(aes(N))+geom_density()+scale_x_log10()
+```
+
+```{r}
+TF_data=data
+for(TFs in unique(nr$TF)){
+  subdata=nr %>% filter(TF==TFs)
+  if(any(subdata$seq_id%in%TF_data$seq_id)){
+    TF_data[[paste0("TF_",TFs)]]=TF_data$seq_id%in%(subdata$seq_id)
+  }}
+rm(nr)
+gc()
+
+write_tsv(TF_data, "Tables/chipatlas_remap/data_TF_remap.tsv")
+```
+
+```{r}
+nTF=TF_data %>% select(-TF_knownmotif) %>% group_by(rep) %>% summarise(across(starts_with("TF_"),sum))%>% 
+  pivot_longer(starts_with("TF_"), names_to = "feature",values_to = "counts") %>% 
+  filter(counts>100) %>% add_count(feature) %>% filter(n==2)
+
+tidy_TF_data=TF_data %>% dplyr::select(mean, mean_sw, var_rank_sw, rep, any_of(unique(nTF$feature))) %>% 
+  mutate(rep=as.factor(rep),across(where(is.logical), ~.x%>% factor(level=c("TRUE","FALSE"))))
+repname=unique(tidy_TF_data$rep)
+
+```
+
+## Activity Effect
+
+```{r}
+wilcox=map(tidy_TF_data %>% select(-mean, -mean_sw,-var_rank_sw, -rep), ~coin::wilcox_test(formula=mean~.x|rep, data=tidy_TF_data) %>% pvalue())
+wilcox=tibble(feature=names(wilcox), pval=list_c(wilcox), pval_corr=p.adjust(pval, "BH", length(wilcox)))
+wilcox_rep1=map(tidy_TF_data %>% filter(rep==repname[1])%>%  select(-mean, -mean_sw,-var_rank_sw, -rep), ~coin::wilcox_test(formula=mean~.x, data=tidy_TF_data%>% filter(rep==repname[1]), conf.int=T))
+wilcox_rep2=map(tidy_TF_data %>% filter(rep==repname[2])%>%  select(-mean, -mean_sw,-var_rank_sw, -rep), ~coin::wilcox_test(formula=mean~.x, data=tidy_TF_data%>% filter(rep==repname[2]), conf.int=T))
+
+wilcox_df2=map2(list(wilcox_rep1, wilcox_rep2),repname,
+                ~tibble(feature=names(.x),estimate=map(.x,~confint(.x)$estimate) %>% list_c(), 
+                        P2.5=map(.x,~confint(.x)$conf.int[1]) %>% list_c(),P97.5=map(.x,~confint(.x)$conf.int[2]) %>% list_c() ,
+                        rep=.y)%>% 
+                  pivot_longer(c(starts_with("estimate"),starts_with("P2.5"), starts_with("P97.5")),names_to = "val", values_to="estimate") %>% 
+                  arrange(desc(estimate)) %>% mutate(feature=fct_inorder(feature))) %>% list_rbind() %>% left_join(wilcox)
+
+wilcox_df2 %>% filter(feature%in% vbles) %>% arrange(estimate) %>% mutate(act=ifelse(sign(estimate)==1,"High activity", "Low activity")) %>% 
+  pivot_wider(names_from = val, values_from = estimate) %>% left_join(nTF) %>% filter(pval_corr<0.05, sign(P97.5)==sign(P2.5)) %>%  add_count(feature) %>% filter(nn==2) %>% 
+  ggplot(aes(x=ifelse(rep=="Rep 1", -abs(estimate), abs(estimate)), y=fct_inorder(feature)))+geom_col(orientation="y", position="identity", aes( fill=act), alpha=0.8)+
+  geom_vline(xintercept = 0, linetype="dashed")+labs(y="Features", x="Activity effect", fill="Effect")+xlim(c(-max(abs(wilcox_df2$estimate)),max(abs(wilcox_df2$estimate))))+
+  geom_errorbarh(data=~.x%>% filter(rep==repname[1]), aes(xmax=-abs(P2.5) , xmin=-abs(P97.5)), height=0.01, col="#777777",  linewidth=1.5)+
+  geom_errorbarh(data=~.x%>% filter(rep==repname[2]), aes(xmax=abs(P2.5) , xmin=abs(P97.5)), height=0.01, col="#777777", linewidth=1.5)+
+  theme(text=element_text(size=20))+scale_fill_manual(values=c("Low activity"="#14AFB2", "High activity"="#E0777D"))
+
+```
+
+### Gene set enrichments
+
+```{r}
+pregsea_act=function(df, rep, var){
+  ids<-AnnotationDbi::select(hs, 
+                             keys = (df %>% filter(rep==rep) %>% mutate(feature=str_remove(feature,"TF_")))$feature,
+                             columns = c("ENTREZID", "SYMBOL"),
+                             keytype = "SYMBOL") %>% unique()
+  
+  pregsea=df%>% mutate(feature=str_remove(feature,"TF_")) %>% 
+    filter(val=="estimate") %>% arrange(desc(estimate))%>% left_join(ids, by=c("feature"="SYMBOL"))%>% 
+    filter(!is.na(ENTREZID)) %>% group_split(rep)
+  
+  ordered_genes=pregsea[[1]]$estimate
+  names(ordered_genes)=pregsea[[1]]$ENTREZID
+  return(ordered_genes)
+}
+```
+
+```{r}
+ordered_genes=pregsea_act(wilcox_df2, repname[1])
+GSE_GO_rep1<-gseGO(ordered_genes, ont="all", OrgDb = "org.Hs.eg.db")
+GSE_GO_rep1_df<-as.data.frame(GSE_GO_rep1) %>% arrange(desc(NES))
+gseaplot2(GSE_GO_rep1, GSE_GO_rep1_df$ID[1], title=GSE_GO_noise_rep1_df$Description[1])
+NESplot(GSE_GO_rep1)
+GSE_REACTOME_rep1 <- gsePathway(ordered_genes, 
+                                pvalueCutoff = 0.05,
+                                pAdjustMethod = "BH", 
+                                verbose = FALSE)
+GSE_KGG_rep1<-gseKEGG(ordered_genes)
+```
+
+```{r}
+ordered_genes=pregsea(wilcox_df2, repname[2])
+GSE_GO_rep2<-gseGO(ordered_genes, ont="all", OrgDb = "org.Hs.eg.db")
+GSE_GO_rep2_df<-as.data.frame(GSE_GO_rep2) %>% arrange(desc(NES))
+gseaplot2(GSE_GO_rep2, GSE_GO_rep2_df$ID[1], title=GSE_GO_noise_rep2_df$Description[1])
+NESplot(GSE_GO_rep2)
+GSE_REACTOME_rep2 <- gsePathway(ordered_genes, 
+                                pvalueCutoff = 0.05,
+                                pAdjustMethod = "BH", 
+                                verbose = FALSE)
+GSE_KGG_rep2<-gseKEGG(ordered_genes)
+```
+
+## Noise effect
+
+```{r}
+vbles=tidy_TF_data  %>% select( -mean_sw, -var_rank_sw, -rep) %>% names()
+
+auc_l=list()
+for(j in unique(tidy_TF_data$rep)){
+  df=tidy_TF_data %>% filter(rep==j)
+  for(i in vbles){
+    auc_l[[j]][[i]]=roc(df[[i]],df[["var_rank_sw"]], ci=T, boot.n=1000, direction=">")
+  }
+}
+auc_df=list()
+for (i in c(1,2)){
+  auc_df[[i]]=map(auc_l[[i]], ~tibble(rep=unique(tidy_TF_data$rep)[i], ci2.5=(.x$ci %>% as.numeric)[1], ci97.5=(.x$ci %>% as.numeric)[3], AUC=(.x$ci %>% as.numeric)[2])) %>% 
+    list_rbind() %>% mutate(feature=names(auc_l[[1]]))
+}
+auc_df=list_rbind(auc_df)
+
+plot_auc2=function(df){
+  df %>%  arrange(AUC) %>% mutate(noise=ifelse(AUC>0.5, "High noise", "Low noise")) %>% filter((ci2.5>0.5&ci97.5>0.5)|(ci2.5<0.5&ci97.5<0.5)) %>% add_count(feature) %>% filter(n==2) %>% 
+    ggplot(aes(x=AUC-0.5, y=fct_inorder(feature), group=rep)) +
+    geom_col(orientation="y", position="dodge", aes( fill=noise, alpha=rep))+
+    scale_alpha_manual(values=c("Rep 1"=1, "Rep 3"=0.7))+
+    theme(text=element_text(size=20), axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.grid = element_blank())+labs(fill="Effect", x="AUC (Noise effect)", y="Features", alpha="")+
+    scale_x_continuous(labels = function(x) x + 0.5)+
+    #geom_errorbarh(aes(xmax=abs(ci2.5)-0.5 , xmin=abs(ci97.5)-0.5), position=position_dodge(1), height=0.05, col="#777777",  linewidth=0.5)+
+    scale_fill_manual(values=c("High noise"="#F18F01", "Low noise"="#99C24D"))
+}
+plot_auc2(auc_df)
+```
+
+### Gene set enrichment
+
+```{r}
+pregsea_noise=auc_df %>% mutate(feature=str_remove(feature,"TF_")) %>% arrange(desc(AUC))%>% 
+  left_join(ids, by=c("feature"="SYMBOL"))%>% filter(!is.na(ENTREZID)) %>% group_split(rep)
+ordered_noise=pregsea_noise[[1]]$AUC
+names(ordered_noise_)=pregsea_noise[[1]]$ENTREZID
+
+```
+
+```{r}
+GSE_GO_noise_rep1<-gseGO(ordered_noise, ont="all", OrgDb = "org.Hs.eg.db")
+GSE_GO_noise_rep1_df<-as.data.frame(GSE_GO_noise_rep1) %>% arrange(desc(NES))
+enrichplot::gseaplot2(GSE_GO_noise_rep1, GSE_GO_noise_rep1_df$ID[1], title=GSE_GO_noise_rep1_df$Description[1])
+NESplot(GSE_GO_noise_rep1,ontology = "CC")
+GSE_REACTOME_noise_rep1 <- gsePathway(ordered_noise, 
+                                      pvalueCutoff = 0.05,
+                                      pAdjustMethod = "BH", 
+                                      verbose = FALSE)
+GSE_KGG_rep1<-gseKEGG(ordered_noise)
+```
+
+```{r}
+ordered_noise=pregsea_noise[[2]]$AUC
+names(ordered_noise_)=pregsea_noise[[2]]$ENTREZID
+GSE_GO_noise_rep2<-gseGO(ordered_noise, ont="all", OrgDb = "org.Hs.eg.db")
+GSE_GO_noise_rep2_df<-as.data.frame(GSE_GO_noise_rep2) %>% arrange(desc(NES))
+enrichplot::gseaplot2(GSE_GO_noise_rep2, GSE_GO_noise_rep2_df$ID[1], title=GSE_GO_noise_rep2_df$Description[1])
+NESplot(GSE_GO_noise_rep2,ontology = "CC")
+GSE_REACTOME_noise_rep2 <- gsePathway(ordered_noise, 
+                                      pvalueCutoff = 0.05,
+                                      pAdjustMethod = "BH", 
+                                      verbose = FALSE)
+GSE_KGG_rep2-gseKEGG(ordered_noise)
+```
