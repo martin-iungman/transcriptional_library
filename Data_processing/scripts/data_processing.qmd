@@ -13,7 +13,7 @@ library(patchwork)
 library(ggnewscale)
 library(wCorr)
 theme_set(theme_bw())
-#files=list.files("Data_2023/Count_table/FASTP","counts_ampliconseq2023_f2_.-..tsv", full.names = T)
+files=list.files("Data_processing/Count_table","counts_ampliconseq2023_.-..tsv", full.names = T)
 clrs=ghibli::ghibli_palette("PonyoMedium")[c(3,4,6,2,5,7,1)]
 clrs2=ghibli::ghibli_palette("PonyoLight")[c(3,4,6,2,5,7,1)]
 ```
@@ -93,8 +93,7 @@ parallel -j12 source scripts/filename.sh :::: tmp.txt
 
 ```
 
-3- Trim primers with *cutadapt*. Discard those reads lacking the primer.
-Then trim poly G tail with FASTP, along with quality trimming
+3- Trim primers with *cutadapt*. Discard those reads lacking the primer. Then trim poly G tail with FASTP, along with quality trimming
 
 ```{bash}
 #| eval: false
@@ -117,7 +116,6 @@ rm $temp2
 gzip $trimmed1
 gzip $trimmed2
 ```
-
 
 ### Alignment
 
@@ -166,7 +164,7 @@ samtools index $sorted_file
 #| code-summary: count_reads.sh
 
 bam_file="Alignment/bam/alignment_sorted_$1.bam"
-output="Count_table/counts_ampliconseq2023_f2_$1.tsv"	
+output="Count_table/counts_ampliconseq2023_$1.tsv"	
 for seq in $(cat seq_id.txt); do
 	num_reads=$(samtools view -c -f 2 $bam_file $seq)
 	echo -e "$seq\t$num_reads"
@@ -186,5 +184,3 @@ tmp=tibble(samplename, trimmed=total_reads, paired_alignment, rep=factor(str_rem
 tmp$data=factor(tmp$data, levels=c("FASTQ", "trimmed", "paired_alignment"),labels = c("FASTQ", "trimmed", "paired_alignment"))
 tmp%>%ggplot(aes(samplename,counts, fill=data))+geom_col(position = "dodge", col=clrs[4])+scale_fill_manual(values=clrs[c(3,5,2)])+xlab("Sample")
 ```
-
-
