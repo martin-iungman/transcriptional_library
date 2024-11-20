@@ -5,7 +5,7 @@
 Library_data/*
 !Library_data/bash_scripts
 External_data/*
-!External_data/download_data.sh
+!External_data/*.sh
 Data_processing/*
 !Data_processing/scripts
 !Data_processing/pcr_primers.fa
