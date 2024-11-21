@@ -1,0 +1,315 @@
+---
+title: "FANTOM5 Tissues - Library"
+author: "Martin Iungman"
+params:
+  write: false
+  bed_summ: false
+---
+
+```{r}
+#| code-summary: settings
+packages<-c("rtracklayer","tidyverse","BSgenome.Hsapiens.UCSC.hg38","ggridges", "patchwork")
+invisible(lapply(packages, library, character.only = TRUE))
+lib_gr=import.bed("Library_data/res/library.bed")
+theme_set(theme_bw())
+```
+
+```{r}
+#| code-summary: load_cage function
+load_cage=function(df){
+  ls=map(df$filename, ~import.bed(.x)%>% #load bed files
+         plyranges::join_overlap_left_directed(lib_gr,.)%>% #overlap with the library
+           values()%>%as_tibble()%>%group_by(name.x)%>%
+           dplyr::summarise(counts=sum(score.y)%>%replace_na(0)))%>% #sum the counts overlapping each promoter
+    list_rbind()%>%group_by(name.x)%>%dplyr::summarise(counts=sum(counts)) #join all the samples
+  return(ls)
+}
+load_summ_cage=function(){
+filenames=paste0("Tables/Library_filt_CAGE/",unique(cell_ont$`Facet ontology term`),".bed")
+filenames=filenames[filenames%in%list.files("Tables/Library_filt_CAGE", full.names = T)]
+sample_name=str_remove(filenames, "Tables/Library_filt_CAGE/")%>%str_remove(".bed")
+  beds=map(filenames, import.bed)
+  ls=map2(beds, sample_name, ~.x%>%plyranges::join_overlap_left_directed(lib_gr,.)%>% #overlap with the library
+           values()%>%as_tibble()%>%group_by(name.x)%>%
+           dplyr::summarise(counts=sum(score.y)%>%replace_na(0))%>%mutate(sample=.y))
+  
+  return(ls)
+}
+```
+
+```{r}
+#| code-summary: gini function
+gini <- function(x, weights=rep(1,length=length(x))){ ## copied form reldist package
+  ox <- order(x)
+  x <- x[ox]
+  weights <- weights[ox]/sum(weights)
+  p <- cumsum(weights)
+  nu <- cumsum(weights*x)
+  n <- length(nu)
+  nu <- nu / nu[n]
+  sum(nu[-1]*p[-n]) - sum(nu[-n]*p[-1])
+}
+```
+
+```{r}
+#| code-summary: shape_process_bed function
+
+shape_process_bed=function(bed, tissue){
+  sum_prom=elementMetadata(bed)%>%as_tibble()%>%
+    group_by(name)%>%dplyr::summarise(tot_prom=sum(score))
+  elementMetadata(bed)<-elementMetadata(bed)%>%as_tibble()%>%
+    right_join(sum_prom,by="name")%>%
+    mutate(relscore=score/tot_prom, partial_entropy=relscore*log2(relscore))
+  ol2<-subset(bed, bed$tot_prom>=50)
+  entropy=elementMetadata(bed)%>%as_tibble()%>%
+    group_by(name)%>%dplyr::summarise(entropy=sum(partial_entropy),
+                                      tot_prom=unique(tot_prom))%>%
+    left_join(tibble(name=lib_gr$name,width=width(lib_gr)), by="name")%>%
+    mutate(norm_entropy=(-1/log2(width)*entropy), tissue=tissue)
+  return(entropy)
+}
+```
+
+```{r}
+#| code-summary: relpos_cage function
+
+relpos_cage=function(bed){
+  proms=unique(bed$name)
+  lib_seq=map(proms, ~lib_gr[lib_gr$name==.x])
+  bed_seq=map(proms, ~bed[bed$name==.x])
+  dfs=map2(lib_seq,bed_seq, ~tibble(pos=seq(start(.x),end(.x)),
+                                    relpos=1:width(.x))%>%
+             left_join(as_tibble(.y), by=c("pos"="start"))%>%
+             mutate(score=replace_na(score,0), name=unique(na.omit(name)), strand=unique(na.omit(strand)))%>%
+             select(pos,relpos,name,score, strand)
+           )
+  return(dfs)
+}
+```
+
+
+## Tissue variability
+
+We assign for each tissue sample in FANTOM5 a reference tissue in order to group them and reduce the effect of having many samples too similar between each other. The classification is based on @https://www.nature.com/articles/nature12787. For each sequence, all the counts in the range of positions for all the respective samples are summed. Then they are normalized by the whole library size.
+
+```{r}
+set="tissue"
+cell_ont=readxl::read_xls(paste0("External_data/FANTOM5/",set,"_ontology_FANTOM5.xlsx"))
+inputFiles = list.files(paste0("External_data/FANTOM5/hg38_",set), full.names = T,pattern=".nobarcode.ctss.bed.gz$")
+sample_id=inputFiles%>%str_extract("CNhs.{5}")
+cell_ont=tibble(filename=inputFiles, sample_id=sample_id)%>%inner_join(cell_ont, by=c("sample_id"))
+cell_ont_list=cell_ont%>%group_split(`Facet ontology term`)
+names(cell_ont_list)<-group_keys(cell_ont%>%group_by(`Facet ontology term`))%>%as_vector()
+
+libsize=read.delim("External_data/FANTOM5/library_size_t.txt", sep = " ", header = F)%>%mutate(sample_id=str_extract(V2, "CNhs.{5}"))
+names(libsize)=c("size", "filename", "sample_id")
+
+cell_ont=cell_ont%>%left_join(libsize, by="sample_id")
+
+
+libsize_tissues=cell_ont%>%group_by(`Facet ontology term`)%>%summarise(libsize=sum(size, na.rm=T))
+write_tsv(libsize_tissues, "External_data/FANTOM5/library_size_tissue_by_facets.tsv")
+```
+
+```{r}
+if(params$bed_summ){
+  ls=load_summ_cage()%>%
+  ls=ls%>%list_rbind()%>%dplyr::rename(name=name.x)%>%left_join(libsize_tissues, by=c("tissue"="Facet ontology term"))
+  if(params$write){write_tsv(ls,paste0("Tables/",set,"_CAGE_activity.tsv"))}
+}else{
+  if(params$write){
+    ls=cell_ont_list%>%imap(~load_cage(.x)%>%mutate(sample=.y))%>%list_rbind()%>%dplyr::rename(name=name.x)
+    ls%>%write_tsv(paste0("Tables/",set,"_CAGE_activity.tsv"))}else{
+    ls=read_tsv(paste0("Tables/",set,"_CAGE_activity.tsv"))
+  }
+}
+long_ls=ls%>%mutate(TPM=1E6*counts/libsize)
+
+long_ls_filt=long_ls%>%mutate(min_signal=TPM>1)%>%group_by(name)%>%mutate(sum_counts=sum(counts), n_min_signal=sum(min_signal), sum_TPM=sum(TPM), median_TPM=median(TPM),mean_TPM=mean(TPM))
+```
+
+```{r}
+#| code-summary: correlograme
+#| label: fig-1
+#| fig-cap: Spearman correlation of normalized CAGE counts (summed up for each region) in the library between the different reference tissues. 
+cor_matrix=long_ls%>%select(name, TPM, tissue)%>%pivot_wider(values_from = TPM, names_from = tissue)%>%select(-name)%>%as.matrix()%>%cor(method="spearman")%>%round(2)
+
+corr_mat <- ggcorrplot::ggcorrplot(
+  cor_matrix, hc.order = TRUE, type = "low",show.diag = T,
+  outline.col = "white", ggtheme = theme_bw)+theme(axis.ticks = element_blank(), axis.text.x=element_text(size=5),axis.text.y=element_text(size=5) )
+plotly::ggplotly(corr_mat)
+```
+
+```{r}
+#| label: fig-2
+#| fig-cap: Association between the number of tissues with the number of positive samples. A positive sample is the one with more than 10 counts. The sequences where the total number of counts along all the tissues is less than 30 or havinng none positive tissue, will be removed from the downstream analysis.
+p=long_ls_filt%>%select(name, n_min_signal, sum_counts)%>%unique()%>%mutate(removed=any(n_min_signal<1))%>%ggplot(aes(n_min_signal, sum_counts, col=removed))+geom_point(size=0.5)+scale_y_log10()+xlab("Number of positive samples")+ylab("Sum counts")
+ggExtra::ggMarginal(p)
+```
+
+```{r}
+#| label: fig-3
+#| fig-cap: Assoctiation between the median and the mean counts along tissues, for each promoter. The samples with low gini index (low variability) it are expected to be in the identity line. 
+long_ls_filt=long_ls_filt%>%filter(n_min_signal>=1)
+gini_df=long_ls_filt%>%group_by(name)%>%summarise(gini_tissue=gini(TPM), n_min_signal=unique(n_min_signal), sum_counts_tissue=unique(sum_counts), sum_TPM_tissue=unique(sum_TPM), mean_TPM_tissue=unique(mean_TPM), median_TPM_tissue=unique(median_TPM))
+if(params$write){write_tsv(gini_df, paste0("Tables/gini_",set,"_library.tsv"))}
+
+gini_df%>%ggplot(aes(mean_TPM,median_TPM,col=gini))+geom_point()+scale_x_log10()+scale_y_log10()+
+  xlab("Mean normalized counts")+ylab("Median normalized counts")
+```
+
+```{r}
+HK=read_tsv("External_data/HK_exons.tsv", col_names = c("name", "id"))
+seq_data=read_tsv("Library_data/res/seq_data.tsv")
+
+gini_df2=gini_df%>%left_join(seq_data, by=c("name"="seq_id"))%>%
+  mutate(prom_index=ifelse(type=="promoter", str_extract(name, ".{1}$"), NA), HK=gene_sym%in%HK$name)
+```
+
+```{r}
+#| label: fig-4
+#| fig-cap: Distribution of mean counts and gini index for each sequence type. Enhanccers tend to have lower expression and higher gini index (high variability between samples)
+gini_df2%>%mutate(log10_mean_TPM=log10(mean_TPM))%>%pivot_longer(c(gini,log10_mean_norm),values_to = "val", names_to = "var")%>%
+  ggplot(aes(val,col=type))+geom_density()+xlab("Gini Index")+facet_wrap(~var, scales = "free")
+```
+
+```{r}
+#| label: fig-5
+#| fig-cap: Distribution of Gini index for Main promoters (the ones with higher number of total counts), separating whether they in the Housekeeping list or not. 
+gini_df2%>%filter(prom_index=="1")%>%
+  ggplot(aes(gini, col=HK))+geom_density()+labs(col="Housekeeping list")+ggtitle("Main promoters")
+gini_df2%>%mutate(log10_mean_TPM=log10(mean_TPM))%>%pivot_longer(c(gini,log10_mean_TPM),values_to = "val", names_to = "var")%>%
+  ggplot(aes(val,col=HK))+geom_density()+facet_wrap(~var, scales = "free", strip.position = "bottom")+labs(col="Housekeeping list")+ggtitle("Main promoters")+xlab("")
+```
+
+## Tissue shape (GINI)
+
+```{r}
+filenames=paste0("Tables/Library_filt_CAGE/",unique(cell_ont$`Facet ontology term`),".bed")
+filenames=filenames[filenames%in%list.files("Tables/Library_filt_CAGE", full.names = T)]
+filt_filenames_df=tibble(filt_filename=filenames, `Facet ontology term`=str_remove(filenames, "Tables/Library_filt_CAGE/")%>%str_remove(".bed$"))%>%left_join(libsize_tissues)
+
+if(params$write){
+  beds=map(filt_filenames_df$filt_filename, import.bed)
+  shapes=map2(beds,filt_filenames_df$`Facet ontology term`,shape_process_bed)
+  write_rds(shapes,paste0( "Tables/shape_gini_",set,".rds"))} else{
+    shapes=readRDS(paste0( "Tables/shape_gini_",set,".rds"))
+}
+shape=list_rbind(shapes)%>%group_by(name)%>%add_count(name="active_tissues")%>%dplyr::summarise(shape_t=median(norm_entropy), active_tissues=unique(active_tissues), mad_entropy=mad(norm_entropy))
+if(params$write){write_tsv(shape, paste0("Tables/shape_gini_",set,".tsv"))}
+```
+
+```{r}
+#| label: fig-s1
+#| fig-cap: Distribution of shape index, calculated with the FANTOM5 tissue dataset.
+shape2=shape%>%left_join(seq_data, by=c("name"="seq_id"))%>%
+  mutate(prom_index=ifelse(type=="promoter", str_extract(name, ".{1}$"), NA), HK=gene_sym%in%HK$name)
+p1=shape2%>%ggplot(aes(shape_t))+geom_density()+xlab("Shape Index (Tissue dataset)")
+p2=shape2%>%ggplot(aes(shape_t, col=type))+geom_density()+xlab("Shape Index (Tissue dataset)")
+p1+p2
+```
+
+```{r}
+#| label: fig-s2
+#| fig-cap: Distribution of shape index, calculated with the FANTOM5 tissue dataset, for the promoters which higher activity overall tissues.
+
+shape2%>%filter(prom_index==1)%>%ggplot(aes(shape_t, col=HK))+geom_density()+ggtitle("Main promoters")
+```
+
+## Merged Tissue File
+
+```{r}
+if(params$write){
+beds=pmap(list(beds,filt_filenames_df$`Facet ontology term`, filt_filenames_df$libsize), ~mutate(..1, sample=..2)%>%select(-name)%>%mutate(score=1E6*score/..3))
+
+group_bed=do.call("c",beds)
+beds_sum=group_bed%>%plyranges::join_overlap_left_directed(.,lib_gr)%>%as_tibble()%>%group_by(seqnames, start, strand,name)%>%summarise(sum_score=sum(score.x, na.rm = T))
+beds_wide=group_bed%>%plyranges::join_overlap_left_directed(.,lib_gr)%>%as_tibble()%>%select( -score.y,-end,-width)%>%unique()%>%pivot_wider(values_from = "score.x", names_from = "sample")%>%mutate(across(where(is.numeric), ~replace_na(.x,0)))
+
+beds_sum_gr=GRanges(seqnames = beds_sum$seqnames, IRanges(start = beds_sum$start, width = 1),strand = beds_sum$strand, name=beds_sum$name, score=beds_sum$sum_score )
+export.bed(beds_sum_gr, "Tables/Library_filt_CAGE/tissue_merged.bed")
+write_tsv(as_tibble(beds_wide), "Tables/FANTOM5_all_tissues.tsv")}else{
+  beds_sum_gr=import.bed("Tables/Library_filt_CAGE/tissue_merged.bed")
+}
+```
+
+## TSS positioning Tissue
+
+```{r}
+#| label: fig-6
+#| fig-cap: Proportion of counts along the sequence. The median proportion along samples is calculated. In the left, the dataset is split by the corresponding shape value for tissues (1 is narrower promoter, 4 is broader).
+if(params$write){
+  dfs=relpos_cage(beds_sum_gr)
+  relpos_df=dfs%>%map(~mutate(.x,relscore=score/sum(score),relpos=ifelse(strand=="-", max(relpos):1,relpos), , sumscore=sum(score)))%>%list_rbind()
+  write_tsv(relpos_df,"Tables/tissue_relpos.tsv")
+}else{
+  relpos_df=read_tsv("Tables/tissue_relpos.tsv")
+}
+p1=relpos_df%>%filter(sumscore>10,str_detect(name, "^FP"))%>%group_by(relpos)%>%summarise(median_score=median(relscore))%>%
+  ggplot(aes(relpos,median_score))+geom_line()+xlab("Relative position")+ylab("Median counts")
+
+p2=relpos_df%>%inner_join(shape)%>%
+  filter(sumscore>100,str_detect(name, "^FP"))%>%
+  mutate(quartile_shape=factor(ntile(shape_t,4)))%>%
+  group_by(quartile_shape, relpos)%>%summarise(median_score=median(relscore))%>%
+  ggplot(aes(relpos,median_score, col=quartile_shape))+
+  geom_line()+xlim(200,252)+
+  xlab("Relative position")+ylab("Median counts")
+
+p1+p2+plot_annotation("Relative counts distribution - Promoters")
+
+```
+
+```{r}
+#| label: fig-7
+#| fig-cap: Heatmap for the distribution of the counts along each promoters. Promoters with less that 10 counts are filtered out. Counts are normalized to their own activity. Promoters are ordered by shape, with lowest values (wider TSSs) on the top 
+relpos_df%>%inner_join(shape)%>%filter(sumscore>10, !is.na(shape_t), !str_detect(name, "^ENSG"))%>%dplyr::mutate(name=factor(name, levels = shape$name[order(shape$shape_t)]))%>%
+  ggplot(aes(relpos, name, fill=relscore))+geom_tile(na.rm=T)+
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())+
+  scale_fill_gradient(high="darkblue", low="white")+xlab("Relative position")+ylab("Promoters ordered by shape")+ggtitle("Counts distribution - Promoters")+xlim(200,252)
+```
+
+```{r}
+#| label: fig-8
+#| fig-cap: Heatmap for the distribution of the counts along each promoters. Promoters with less that 10 counts are filtered out. Promoters are ordered by shape, with lowest values (wider TSSs) on the top
+relpos_df%>%inner_join(shape)%>%filter(sumscore>10, !is.na(shape_t), !str_detect(name, "^ENSG"))%>%mutate(name=factor(name, levels = shape$name[order(shape$shape_t)]))%>%
+  ggplot(aes(relpos, name, fill=log10(score+0.1)))+geom_tile(na.rm=T)+
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())+
+  scale_fill_gradient(high="darkblue", low="white")
+```
+
+```{r}
+#| label: fig-9
+#| fig-cap: Heatmap for the distribution of the counts along each enhancer The ones with less that 10 counts are filtered out. Enhancers are ordered by shape, with lowest values (wider TSSs) on the top
+
+relpos_df%>%inner_join(shape)%>%filter(sumscore>10, !is.na(shape_t), str_detect(name, "^ENSG"))%>%mutate(name=factor(name, levels = shape$name[order(shape$shape_t)]))%>%ggplot(aes(relpos, name, fill=log10(score+0.1)))+geom_tile(na.rm=T)+
+  theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())+
+  scale_fill_gradient(high="darkblue", low="white")+ggtitle("Counts distribution - Enhancers")
+
+```
+
+```{r}
+#| label: fig-10
+#| fig-cap: Distribution of counts per promoter on the tissue merged dataset. In the right, divided by shape index.  
+p1=relpos_df%>%select(name, sumscore)%>%unique()%>%ggplot(aes(sumscore))+geom_density()+scale_x_log10()+xlab("Counts")
+p2=relpos_df%>%select(name, sumscore)%>%unique()%>%
+  inner_join(shape)%>%  
+  mutate(quartile_shape=factor(ntile(shape_t,4)))%>%
+  ggplot(aes(sumscore,col=quartile_shape))+geom_density()+scale_x_log10()+xlab("Counts")
+p1+p2
+```
+
+```{r}
+#| label: fig-11
+#| fig-cap: Mean counts for each relative position of the sequences, on the tissue merged dataset. In the right, divided by shape index.  
+
+p1=relpos_df%>%filter(sumscore>10,str_detect(name, "^FP"))%>%group_by(relpos)%>%summarise(mean_score=mean(relscore))%>%
+  ggplot(aes(relpos,mean_score))+geom_line()+xlab("Relative position")
+
+p2=relpos_df%>%inner_join(shape)%>%
+  filter(sumscore>100,str_detect(name, "^FP"))%>%
+  mutate(quartile_shape=factor(ntile(shape_t,4)))%>%
+  group_by(quartile_shape, relpos)%>%summarise(mean_relscore=mean(relscore))%>%
+  ggplot(aes(relpos,mean_relscore, col=quartile_shape))+geom_line()+xlim(150,252)+xlab("Relative position")
+p1+p2
+```
