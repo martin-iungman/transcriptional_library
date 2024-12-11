@@ -7,10 +7,12 @@ mkdir FASTQC
 mkdir Trimming
 mkdir Alignment
 mkdir Count_table
+mkdir Summary
 
 echo "Start QC"
 fastqc -t12 --outdir FASTQC FASTQ/*.fastq
 echo "QC done"
+
 parallel -j12 source trimming.sh :::: tmp.txt
 echo "Trimming done"
 
@@ -19,7 +21,11 @@ hisat2-build Library_preprocessing/data/promoter_wo_dupl_SpikeIns.fa library_ind
 
 parallel -j12 source alignment.sh :::: tmp.txt
 echo "alignment done"
+
+parallel -j12 source bam_process.sh :::: tmp.txt
+echo "BAM files sorted and indexed"
+
 parallel -j12 source count_reads.sh :::: tmp.txt
-echo "tables made"
+echo "Count matrix made"
 
 rm  tmp.txt

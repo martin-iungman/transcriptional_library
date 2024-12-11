@@ -15,7 +15,7 @@ library(wCorr)
 library(ggsankey)
 
 theme_set(theme_bw())
-files=list.files("Data_processing/Count_table","counts_ampliconseq2023_f2_.-..tsv", full.names = T)
+files=list.files("Data_processing/Count_table","counts_ampliconseq2023_.-..tsv", full.names = T)
 clrs=ghibli::ghibli_palette("PonyoMedium")[c(3,4,6,2,5,7,1)]
 clrs2=ghibli::ghibli_palette("PonyoLight")[c(3,4,6,2,5,7,1)]
 ```
@@ -24,7 +24,7 @@ clrs2=ghibli::ghibli_palette("PonyoLight")[c(3,4,6,2,5,7,1)]
 
 ```{r}
 data=map(files, ~read_tsv(.x, col_names = c("seq_id", "counts")))
-names(data)=files%>%str_remove("^.+2023_f2_")%>%str_remove(".tsv$")
+names(data)=files%>%str_remove("^.+2023_")%>%str_remove(".tsv$")
 data=imap(data, ~mutate(.x, counts=counts/2, sample_rep=.y))
 data_long=data%>%list_rbind()%>%mutate(sample=factor(as.numeric(str_remove(sample_rep, "-.$"))-1), rep=factor(str_replace(sample_rep, "^.-", "Rep ") %>% str_replace("3","2")))
 counts_tot=data_long%>%group_by(sample,rep)%>%summarise(sumCounts=sum(counts)) %>% ungroup()

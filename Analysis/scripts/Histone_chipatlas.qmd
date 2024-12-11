@@ -1,0 +1,98 @@
+---
+title: "CHiPAtlas (Histone)"
+---
+
+```{r}
+library(tidyverse)
+library(pROC)
+
+df=read_tsv("External_data/allPeaks_light.hg38.50_lib_unique.tsv", col_names = c("seq_id", "feature")) #reemplazar TF por feature
+prom_df=read_tsv("Tables/prom_df.tsv")
+data=read_tsv("Tables/full_data.tsv")
+explist=read_tsv("External_data/experimentList_chipatlas.tab", col_names = F) %>% select(X3, X4) %>% unique()
+explist=explist[duplicated(explist$X4),]
+```
+
+## Processing data
+
+```{r}
+df=df %>% count(seq_id, feature, name = "n_samples")
+df=df %>% left_join(explist, by=c("feature"="X4")) %>% rename(group=X3) 
+df %>% write_tsv("Tables/chipatlas_remap/allPeaks_light.hg38.50_lib_final.tsv")
+histones=df %>% filter(group=="Histone")
+hist_data=data
+for(TFs in unique(histones$feature)){
+  subdata=histones %>% filter(feature==TFs)
+  if(any(subdata$seq_id%in%data$seq_id)){
+    hist_data[[paste0("Hist_",TFs)]]=data$seq_id%in%(subdata$seq_id)
+  }}
+write_tsv(hist_data, "Tables/chipatlas_remap/data_Hist_chipatlas.tsv")
+
+```
+
+```{r}
+nTF=hist_data  %>% group_by(rep) %>% summarise(across(starts_with("Hist_"),sum))%>% 
+  pivot_longer(starts_with("Hist_"), names_to = "feature",values_to = "counts") %>% 
+  filter(counts>100) %>% add_count(feature) %>% filter(n==2)
+
+tidy_hist_data=hist_data %>% select(mean, mean_sw, var_rank_sw, rep, any_of(unique(nTF$feature))) %>% mutate(rep=as.factor(rep),across(where(is.logical), ~.x%>% factor(level=c("TRUE","FALSE"))))
+repname=unique(tidy_hist_data$rep)
+```
+
+## Activity Effect
+
+```{r}
+wilcox=map(tidy_hist_data %>% select(-mean, -mean_sw,-var_rank_sw, -rep), ~coin::wilcox_test(formula=mean~.x|rep, data=tidy_hist_data) %>% pvalue())
+wilcox=tibble(feature=names(wilcox), pval=list_c(wilcox), pval_corr=p.adjust(pval, "BH", length(wilcox)))
+wilcox_rep1=map(tidy_hist_data %>% filter(rep==repname[1])%>%  select(-mean, -mean_sw,-var_rank_sw, -rep), ~coin::wilcox_test(formula=mean~.x, data=tidy_hist_data%>% filter(rep==repname[1]), conf.int=T))
+wilcox_rep2=map(tidy_hist_data %>% filter(rep==repname[2])%>%  select(-mean, -mean_sw,-var_rank_sw, -rep), ~coin::wilcox_test(formula=mean~.x, data=tidy_hist_data%>% filter(rep==repname[2]), conf.int=T))
+
+wilcox_df2=map2(list(wilcox_rep1, wilcox_rep2),repname,
+                ~tibble(feature=names(.x),estimate=map(.x,~confint(.x)$estimate) %>% list_c(), 
+                        P2.5=map(.x,~confint(.x)$conf.int[1]) %>% list_c(),P97.5=map(.x,~confint(.x)$conf.int[2]) %>% list_c() ,
+                        rep=.y)%>% 
+                  pivot_longer(c(starts_with("estimate"),starts_with("P2.5"), starts_with("P97.5")),names_to = "val", values_to="estimate") %>% 
+                  arrange(desc(estimate)) %>% mutate(feature=fct_inorder(feature))) %>% list_rbind() %>% left_join(wilcox)
+
+wilcox_df2 %>% filter(feature%in% vbles) %>% arrange(estimate) %>% mutate(act=ifelse(sign(estimate)==1,"High activity", "Low activity")) %>% 
+  pivot_wider(names_from = val, values_from = estimate) %>% left_join(nTF) %>% filter(pval_corr<0.05, sign(P97.5)==sign(P2.5)) %>%  add_count(feature) %>% filter(nn==2) %>% 
+  ggplot(aes(x=ifelse(rep=="Rep 1", -abs(estimate), abs(estimate)), y=fct_inorder(feature)))+geom_col(orientation="y", position="identity", aes( fill=act), alpha=0.8)+
+  geom_vline(xintercept = 0, linetype="dashed")+labs(y="Features", x="Activity effect", fill="Effect")+xlim(c(-max(abs(wilcox_df2$estimate)),max(abs(wilcox_df2$estimate))))+
+  geom_errorbarh(data=~.x%>% filter(rep==repname[1]), aes(xmax=-abs(P2.5) , xmin=-abs(P97.5)), height=0.01, col="#777777",  linewidth=1.5)+
+  geom_errorbarh(data=~.x%>% filter(rep==repname[2]), aes(xmax=abs(P2.5) , xmin=abs(P97.5)), height=0.01, col="#777777", linewidth=1.5)+
+  theme(text=element_text(size=20))+scale_fill_manual(values=c("Low activity"="#14AFB2", "High activity"="#E0777D"))
+
+```
+
+## Noise Effect
+
+```{r}
+vbles=tidy_hist_data  %>% select( -mean_sw, -var_rank_sw, -rep, -mean) %>% names()
+
+auc_l=list()
+for(j in unique(tidy_hist_data$rep)){
+  df=tidy_hist_data %>% filter(rep==j)
+  for(i in vbles){
+    auc_l[[j]][[i]]=roc(df[[i]],df[["var_rank_sw"]], ci=T, boot.n=2000, direction=">")
+  }
+}
+auc_df=list()
+for (i in c(1,2)){
+  auc_df[[i]]=map(auc_l[[i]], ~tibble(rep=unique(tidy_hist_data$rep)[i], ci2.5=(.x$ci %>% as.numeric)[1], ci97.5=(.x$ci %>% as.numeric)[3], AUC=(.x$ci %>% as.numeric)[2])) %>% 
+    list_rbind() %>% mutate(feature=names(auc_l[[1]]))
+}
+auc_df=list_rbind(auc_df)
+
+plot_auc2=function(df){
+  df %>%  arrange(AUC) %>% mutate(noise=ifelse(AUC>0.5, "High noise", "Low noise")) %>% filter((ci2.5>0.5&ci97.5>0.5)|(ci2.5<0.5&ci97.5<0.5)) %>% add_count(feature) %>% filter(n==2) %>% 
+    ggplot(aes(x=AUC-0.5, y=fct_inorder(feature), group=rep)) +
+    geom_col(orientation="y", position="dodge", aes( fill=noise, alpha=rep))+
+    scale_alpha_manual(values=c("Rep 1"=1, "Rep 3"=0.7))+
+    theme(text=element_text(size=20))+labs(fill="Effect", x="AUC (Noise effect)", y="Features", alpha="")+
+    scale_x_continuous(labels = function(x) x + 0.5)+
+    geom_errorbarh(aes(xmax=abs(ci2.5)-0.5 , xmin=abs(ci97.5)-0.5), position=position_dodge(1), height=0.05, col="#777777",  linewidth=1.5)+
+    scale_fill_manual(values=c("High noise"="#F18F01", "Low noise"="#99C24D"))
+}
+plot_auc2(auc_df)
+
+```

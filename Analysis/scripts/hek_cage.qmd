@@ -1,0 +1,61 @@
+---
+title: "HEK CAGE data"
+---
+
+```{r}
+#| code-summary: "settings"
+library(CAGEr)
+library(tidyverse)
+library(tidymodels)
+theme_set(theme_bw())
+lib=rtracklayer::import.bed("Library_data/res/library.bed")
+lib$gene_name=lib$name
+clrs=ghibli::ghibli_palette(name="PonyoMedium")
+clrs1=wesanderson::wes_palette(name="GrandBudapest1")
+clrs2=wesanderson::wes_palette(name="GrandBudapest2")
+```
+
+### CAGE processing with CAGEr
+
+```{r}
+#| echo: true
+hek <- CAGEexp( genomeName     = "BSgenome.Hsapiens.UCSC.hg38"
+             , inputFiles     = "External_data/FANTOM5/embryonic kidney cell line: HEK293%2FSLAM untreated.CNhs11046.10450-106F9.hg38.nobarcode.ctss.bed.gz"
+             , inputFilesType = "bedScore"
+             , sampleLabels   = "HEK")
+
+
+hek=getCTSS(hek)
+hek=annotateCTSS(hek, lib, upstream = 0, downstream = 252)
+```
+
+Normalization:
+
+```{r}
+plotReverseCumulatives(hek, fitInRange = c(5, 1000), onePlot = TRUE)
+
+```
+
+Clustering and Q90 for genomic width.
+
+```{r}
+hek <- normalizeTagCount(hek, method = "powerLaw", fitInRange = c(5, 1000), alpha = 1.18, T = 1E6)
+hek=clusterCTSS(hek, 
+                        threshold = 5,
+                        nrPassThreshold = 1,
+                        thresholdIsTpm = F,
+                        method = "paraclu",
+                        removeSingletons = T,
+                        keepSingletonsAbove = 10,
+                        reduceToNonoverlapping=T,
+                        useMulticore = T,
+                        nrCores = 5)
+hek <- cumulativeCTSSdistribution(hek, clusters = "tagClusters", useMulticore = T)
+hek <- quantilePositions(hek, clusters = "tagClusters", qLow = 0.1, qUp = 0.9)
+saveRDS(hek, "Tables/HEK_CAGEr.rds")
+```
+
+```{r}
+hek_df=tagClustersGR(hek,1,returnInterquantileWidth = T,qLow = 0.1,qUp = 0.9)%>%plyranges::join_overlap_left_directed(lib,.)%>%as_tibble()
+write_tsv(hek_df, "Tables/HEK_CAGEr_df.tsv")
+```
