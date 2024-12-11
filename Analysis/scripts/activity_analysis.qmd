@@ -1,0 +1,791 @@
+---
+title: "Activity Analysis"
+author: "Martin Iungman"
+toc: true
+---
+
+## 
+
+```{r}
+library(tidyverse)
+library(ggmosaic)
+library(patchwork)
+theme_set(theme_bw())
+stats=read_tsv("Tables/noise/stats_rep_noise2023.tsv")
+
+stats=stats%>%filter(sum_norm_counts>1000)%>%mutate(median=factor(floor(median)), rep=paste0("Rep ",rep))
+clrs=ghibli::ghibli_palette(name="PonyoMedium")
+clrs1=wesanderson::wes_palette(name="GrandBudapest1")
+clrs2=wesanderson::wes_palette(name="GrandBudapest2")
+```
+
+```{r}
+inconsistent_median=stats  %>% select(seq_id, median, rep) %>% pivot_wider(names_from = rep, values_from = median) %>%mutate(median_dif=abs(as.numeric(`Rep 1`)-as.numeric(`Rep 2`))) %>% filter(median_dif>1) %>% select(seq_id) %>% as_vector()
+
+prom_df=read_tsv("Tables/prom_df.tsv")
+data=inner_join(stats, prom_df) %>% mutate(median=ifelse(median%in%c(5,6), "5+6", median), mode=ifelse(mode%in%c(5,6), "5+6", mode)) %>% filter(type=="promoter")
+
+data=data %>% filter(!seq_id%in%inconsistent_median)
+```
+
+### Endogenous activity
+
+```{r}
+data %>% mutate(as_factor(mean_sw)) %>% group_by(mean_sw, rep) %>% summarise(hek_tpm=mean(hek_tpm)) %>% ggplot(aes(mean_sw, hek_tpm))+geom_point(col="#CC2936")+geom_smooth(col="#08415c")+facet_wrap(~rep)+labs(x="Mean activity (binned by rank)", y="HEK293 endogenous activity (mean TPM)")+theme(text=element_text(size=20))+scale_y_log10()
+map(data$rep %>% unique(), ~data %>% filter(rep==.x) %>% mutate(as_factor(mean_sw)) %>% group_by(mean_sw) %>% summarise(hek_tpm=mean(hek_tpm))   %>% select( mean_sw, hek_tpm)%>% cor( method="spearman", use="complete.obs"))
+data %>% mutate(mean_sw=factor(floor(mean_rank_sw/1200))) %>% ggplot(aes(mean_sw, hek_tpm+1))+geom_violin(draw_quantiles = 0.5, fill="#CC2936", alpha=0.5)+facet_wrap(~rep)+scale_y_log10()+geom_smooth(data=data ,aes(as.numeric(mean_rank_sw)/1200, hek_tpm+1), col="#CC2936")
+```
+
+### ChrX
+
+```{r}
+data%>%mutate(chrX=seqnames=="chrX") %>% 
+  ggplot(aes(chrX, mean, fill=chrX))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_manual(values = clrs1[c(1,2,5)])+theme(legend.position = "none")+xlab("")
+```
+
+```{r}
+data %>% mutate(chrX=seqnames=="chrX") %>% 
+  ggplot(aes(median, fill=chrX))+geom_bar(position = "fill")+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])
+```
+
+### Promoter index
+
+```{r}
+data%>%
+  ggplot(aes(factor(prom_index_g), mean, fill=factor(prom_index_g)))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_manual(values = clrs1[c(1,2,5)])+theme(legend.position = "none")+xlab("")
+```
+
+```{r}
+data %>% 
+  ggplot(aes(median, fill=prom_index_g))+geom_bar(position = "fill")+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])
+```
+
+### Alternative promoters in library (P1 proms)
+
+```{r}
+data%>%filter(prom_index==1) %>% 
+  ggplot(aes(factor(n_prom_g), mean, fill=factor(n_prom)))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_manual(values = clrs2[c(2,3,4)])+theme(legend.position = "none")+xlab("")+geom_jitter(alpha=0.1,size=0.1)
+```
+
+```{r}
+data%>%filter(prom_index==1) %>%
+  ggplot(aes(median, fill=factor(n_prom_g)))+geom_bar(position="fill")+facet_wrap(~rep)+scale_fill_manual(values = clrs2[c(2,3,4)])+xlab("Median")+labs(fill="Alternative promoters \nin library")
+```
+
+### G+C content
+
+```{r}
+data %>% ggplot(aes(mean,g_c))+geom_hex()+facet_wrap(~rep)+geom_smooth()+ylab("G+C")+scale_fill_viridis_c()
+```
+
+```{r}
+data %>% ggplot(aes(median,g_c, fill=median))+geom_violin(draw_quantiles = 0.5,alpha=0.2)+facet_wrap(~rep)+geom_jitter(alpha=0.1, size=0.2,width = 0.15)+ylab("G+C")+theme(legend.position = "none")+scale_fill_viridis_d()
+```
+
+### CpG
+
+```{r}
+data %>% ggplot(aes(mean,CpG))+geom_hex()+facet_wrap(~rep)+geom_smooth()+ylab("CpG content")+scale_fill_viridis_c()
+```
+
+```{r}
+data %>% ggplot(aes(median,CpG, fill=median))+geom_violin(draw_quantiles = 0.5, alpha=0.2)+facet_wrap(~rep)+geom_jitter(alpha=0.1, size=0.2,width = 0.15)+ylab("CpG content")+scale_fill_viridis_d()+theme(legend.position = "none")
+```
+
+### CGI
+
+**Presence**
+
+```{r}
+data %>% 
+  ggplot(aes(CGI, mean, fill=CGI))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])+geom_jitter(size=0.05,alpha=0.05)+theme(legend.position = "none")
+
+```
+
+```{r}
+data %>% 
+  ggplot(aes(median, fill=CGI))+geom_bar(position = "fill")+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])
+
+```
+
+```{r}
+data %>% group_by(mean_sw,rep) %>% summarise(CGI=sum(CGI)/n()) %>% ggplot(aes(mean_sw,CGI,fill="CpG island overlap"))+geom_col()+facet_wrap(~rep)+geom_smooth()+labs(x="Mean activity (binned by rank)", y="Proportion of promoters")+scale_fill_manual(values=c(presence="#3D518C"))
+
+data %>% group_by(mean_sw,rep) %>% summarise(CGI=sum(CGI)/n()) %>% ggplot(aes(mean_sw,CGI))+geom_point(col="#14AFB2")+geom_smooth(col="#216869")+theme(text=element_text(size=20))+facet_wrap(~rep)+ylim(0,1)+labs(x="Mean activity (binned by rank)",y="Proportion of promoters with CGI overlap")+ggtitle("CpG island overlap")
+
+data %>% group_by(mean_sw,rep) %>% summarise(CGI=sum(CGI)/n()) %>% ggplot(aes(mean_sw,CGI, col=rep, group=rep))+geom_point()+geom_smooth()+theme(text=element_text(size=20))+ylim(0,1)+labs(x="Mean activity (binned by rank)",y="Proportion of promoters with CGI overlap")+ggtitle("CpG island overlap")
+```
+
+**Overlap**
+
+```{r}
+data %>% ggplot(aes(width_cgi_overlap, col=median))+geom_density()+facet_wrap(~rep)+scale_color_viridis_d()+xlab("CGI-Promoter overlap (pb)")
+```
+
+```{r}
+data  %>% filter(CGI==T) %>% 
+  ggplot(aes(median,width_cgi_overlap, fill=median))+geom_violin(alpha=0.2, draw_quantiles = 0.5)+facet_wrap(~rep)+geom_jitter(size=0.05,alpha=0.05)+scale_fill_viridis_d()+theme(legend.position = "none")
+```
+
+### TATA-box
+
+#### EPD database
+
+```{r}
+data%>%
+  ggplot(aes(TATA_EPD, mean, fill=TATA_EPD))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])+theme(legend.position = "none")
+```
+
+```{r}
+data%>%
+  ggplot(aes(median, fill=TATA_EPD))+geom_bar(position = "fill")+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])
+```
+
+```{r}
+data %>% group_by(mean_sw,rep) %>% summarise(TATA_EPD=sum(TATA_EPD)/n()) %>% ggplot(aes(mean_sw,TATA_EPD))+geom_point(col="#14AFB2")+geom_smooth(col="#216869")+theme(text=element_text(size=20))+facet_wrap(~rep)+ylim(0,1)+labs(x="Mean activity (binned by rank)",y="Proportion of promoters")+ggtitle("TATA-box")
+```
+
+#### JASPAR
+
+```{r}
+data%>%mutate(TBP=ifelse(TBP==0, 0,ifelse(TBP==1,1,"2+"))) %>% 
+  ggplot(aes(median, fill=TBP))+geom_bar(position = "fill")+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:3])
+```
+
+### INR
+
+```{r}
+data%>%
+  ggplot(aes(INR_EPD, mean, fill=INR_EPD))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])+theme(legend.position = "none")
+```
+
+```{r}
+data%>%
+  ggplot(aes(median, fill=INR_EPD))+geom_bar(position = "fill")+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])
+```
+
+### CCAAT
+
+#### EPD
+
+```{r}
+data%>%
+  ggplot(aes(CCAAT_EPD, mean, fill=CCAAT_EPD))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])+theme(legend.position = "none")
+```
+
+```{r}
+data%>%
+  ggplot(aes(median, fill=CCAAT_EPD))+geom_bar(position = "fill")+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])
+```
+
+#### FIMO (JASPAR)
+
+```{r}
+fimo_CCAAT=read_tsv("Tables/MEME/fimo_CCAAT.tsv", comment="#") %>% filter(sequence_name%in%data$seq_id)
+ggplot(fimo_CCAAT, aes(start))+geom_density(fill=clrs2[7])
+```
+
+```{r}
+data %>% mutate(FIMO_CCAAT=seq_id%in%fimo_CCAAT$sequence_name) %>% 
+  ggplot(aes(FIMO_CCAAT, mean, fill=FIMO_CCAAT))+geom_violin(draw_quantiles = 0.5)+
+  facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])+theme(legend.position = "none")
+```
+
+```{r}
+data %>% mutate(FIMO_CCAAT=seq_id%in%fimo_CCAAT$sequence_name) %>% 
+  ggplot(aes(median, fill=FIMO_CCAAT))+geom_bar(position = "fill")+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])
+```
+
+```{r}
+ggVennDiagram::ggVennDiagram(list(FIMO=fimo_CCAAT$sequence_name, EPD=(data %>% filter(CCAAT_EPD==T))$seq_id))
+```
+
+#### NFYA ChIPseq
+
+```{r}
+NFYA_chip_K562=rtracklayer::import("External_data/ENCFF047JBD_ChipSeq_NFYA_K562cells.bigBed")
+NFYA_chip_K562=subsetByOverlaps(lib, NFYA_chip_K562)
+NFYA_chip_HepG2=rtracklayer::import("External_data/ENCFF251DNC_ChIPSeq_NFYA_HepG2cells.bigBed")
+NFYA_chip_HepG2=subsetByOverlaps(lib, NFYA_chip_HepG2)
+NFYA_chip_GM12878=rtracklayer::import("External_data/ENCFF718CBS_ChIPSeq_NFYA_GM12878cells.bigBed")
+NFYA_chip_GM12878=subsetByOverlaps(lib, NFYA_chip_GM12878)
+
+ggVennDiagram::ggVennDiagram(list(K562=NFYA_chip_K562$name, HepG2=NFYA_chip_HepG2$name, GM12878=NFYA_chip_GM12878$name))+scale_fill_gradient(low=clrs1[1], high=clrs1[2])+scale_color_manual(values=rep("black",3))+ggtitle("NFYA ChIP")
+```
+
+```{r}
+data %>% 
+  pivot_longer(starts_with("NFYA_chip"), names_to = "cell_line", values_to="NFYA_chip") %>% 
+  ggplot(aes(NFYA_chip, mean, fill=NFYA_chip))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep+cell_line)+scale_fill_manual(values = clrs1[1:2])+theme(legend.position = "none")
+```
+
+```{r}
+data %>% 
+  pivot_longer(starts_with("NFYA_chip"), names_to = "cell_line", values_to="NFYA_chip") %>% 
+  ggplot(aes(median, fill=NFYA_chip))+geom_bar(position = "fill")+facet_wrap(~rep+cell_line)+scale_fill_manual(values = clrs1[1:2])
+```
+
+#### All together
+
+```{r}
+data %>% mutate(all_CCAAT=NFYA_chip_K562&NFYA_chip_HepG2&NFYA_chip_GM12878&CCAAT_EPD&CCAAT_FIMO) %>% 
+  ggplot(aes(all_CCAAT, mean, fill=all_CCAAT))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])+theme(legend.position = "none")
+
+```
+
+```{r}
+data %>% mutate(CCAAT=ifelse(CCAAT_EPD, ifelse(NFYA_chip_K562&NFYA_chip_HepG2, "EPD + ChIP", "EPD"), ifelse(NFYA_chip_K562&NFYA_chip_HepG2,"ChIP","-"))) %>% 
+  ggplot(aes(CCAAT, mean, fill=CCAAT))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_manual(values = c(clrs1[c(1,2,4)], clrs[7]))+theme(legend.position = "none")
+```
+
+```{r}
+data  %>% mutate(all_CCAAT=NFYA_chip_K562&NFYA_chip_HepG2&NFYA_chip_GM12878&CCAAT_EPD&CCAAT_FIMO) %>% 
+  ggplot(aes(median, fill=all_CCAAT))+geom_bar(position = "fill")+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])
+```
+
+### TATA and CCAAT
+
+```{r}
+ggVennDiagram(list(TATA=(prom_df %>% filter(TATA_EPD==T))$seq_id, CCAAT=(prom_df %>% filter(CCAAT_EPD==T))$seq_id))+scale_fill_gradient(low=clrs1[1], high=clrs1[2])+scale_color_manual(values=rep("black",3))+ggtitle("All promoters")
+```
+
+```{r}
+p1=ggVennDiagram(list(TATA=(data %>% filter(TATA_EPD==T, median=="5+6", rep=="Rep 1"))$seq_id, CCAAT=(data %>% filter(CCAAT_EPD==T, median=="5+6", rep=="Rep 1"))$seq_id))+scale_fill_gradient(low=clrs1[1], high=clrs1[2])+scale_color_manual(values=rep("black",3))+ggtitle("Median 5+6")
+p2=ggVennDiagram(list(TATA=(data %>% filter(TATA_EPD==T, median=="5+6", rep=="Rep 3"))$seq_id, CCAAT=(data %>% filter(CCAAT_EPD==T, median=="5+6", rep=="Rep 3"))$seq_id))+scale_fill_gradient(low=clrs1[1], high=clrs1[2])+scale_color_manual(values=rep("black",3))+ggtitle("Median 5+6")
+p1+p2
+```
+
+### GC-box
+
+```{r}
+data%>%
+  ggplot(aes(GCbox_EPD, mean, fill=GCbox_EPD))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])+theme(legend.position = "none")
+```
+
+```{r}
+data%>%
+  ggplot(aes(median, fill=GCbox_EPD))+geom_bar(position = "fill")+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])
+```
+
+#### SP1 ChIP-seq
+
+```{r}
+data %>% 
+  pivot_longer(starts_with("SP1_"), names_to = "cell_line", values_to="SP1_chip") %>% 
+  ggplot(aes(SP1_chip, mean, fill=SP1_chip))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep+cell_line)+scale_fill_manual(values = clrs1[1:2])+theme(legend.position = "none")
+```
+
+```{r}
+data  %>% 
+  pivot_longer(starts_with("SP1_"), names_to = "cell_line", values_to="SP1_chip") %>%
+  ggplot(aes(median, fill=SP1_chip))+geom_bar(position = "fill")+facet_wrap(~rep+cell_line)+scale_fill_manual(values = clrs1[1:2])
+```
+
+#### SP2 ChIPseq
+
+```{r}
+data  %>% 
+  pivot_longer(starts_with("SP2_"), names_to = "cell_line", values_to="SP2_chip") %>% 
+  ggplot(aes(SP2_chip, mean, fill=SP2_chip))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep+cell_line)+scale_fill_manual(values = clrs1[1:2])+theme(legend.position = "none")
+```
+
+```{r}
+data %>% 
+  pivot_longer(starts_with("SP2_"), names_to = "cell_line", values_to="SP2_chip") %>% 
+   ggplot(aes(median, fill=SP2_chip))+geom_bar(position = "fill")+facet_wrap(~rep+cell_line)+scale_fill_manual(values = clrs1[1:2])
+```
+
+#### SP3 ChIPSeq
+
+```{r}
+data %>% 
+  ggplot(aes(SP3_chip_HEK293, mean, fill=SP3_chip_HEK293))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])+theme(legend.position = "none")
+```
+
+```{r}
+data %>% select(seq_id, g_c, CpG, GC_box, mean, CCAAT_EPD) %>% mutate(SP2_chip_H1=seq_id%in%SP2_chip_H1$name,
+                SP2_chip_HepG2=seq_id%in%SP2_chip_HepG2$name,
+                SP2_chip_HEK293=seq_id%in%SP2_chip_HEK293$name,
+                SP3_chip_HEK293=seq_id%in%SP3_chip_HEK293$name,
+                SP1_chip_K562=seq_id%in%SP1_chip_K562$name,
+                SP1_chip_HepG2=seq_id%in%SP1_chip_HepG2$name,
+                SP1_chip_HEK293T=seq_id%in%SP1_chip_HEK293T$name,
+                NFYA_chip_K562=seq_id%in%NFYA_chip_K562$name,
+                NFYA_chip_HepG2=seq_id%in%NFYA_chip_HepG2$name,
+                NFYA_chip_GM12878=seq_id%in%NFYA_chip_GM12878$name) %>% select(-seq_id) %>% as.matrix() %>% cor() %>% 
+  ggcorrplot::ggcorrplot()
+```
+
+### TSS motif
+
+#### PWM
+
+```{r}
+data %>% left_join(pos0_class2) %>% ggplot(aes(median, fill=class=="TCT"))+geom_bar(position="fill")
+```
+
+#### Exact match
+
+```{r}
+data %>% pivot_longer(ends_with("TSS"), names_to = "motif", values_to = "presence") %>% ggplot(aes(median, fill=presence))+geom_bar(position="fill")+facet_wrap(motif~rep, nrow=2)+scale_fill_manual(values = clrs1[1:2])
+
+data %>% left_join(tss_df) %>% ggplot(aes(median, fill=TCT_TSS&(!PyPu_TSS)))+geom_bar(position="fill")+facet_wrap(~rep)
+
+```
+
+### Housekeeping Genes (P1 prom)
+
+```{r}
+data%>%filter(prom_index==1) %>% 
+  ggplot(aes(HK, mean, fill=HK))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])+theme(legend.position = "none")
+```
+
+```{r}
+data%>%filter(prom_index==1) %>% 
+  ggplot(aes(median, fill=HK))+geom_bar(position = "fill")+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])
+```
+
+### TF list (P1 prom)
+
+```{r}
+ggplot(data %>% filter(prom_index_g=="Main"), aes(TF, mean, fill=TF))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_manual(values = clrs1[c(1,2,5)])+theme(legend.position = "none")+xlab("Transcription Factor")
+ggplot(data %>% filter(prom_index_g=="Main"), aes(TF_highconf, mean, fill=TF_highconf))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_manual(values = clrs1[c(1,2,5)])+theme(legend.position = "none")+xlab("Transcription Factor (known motif)")
+```
+
+### Natural variants (1000K genomes proyect)
+
+```{r}
+data%>%mutate(n_var=ifelse(is.na(n_var), "0",ifelse(n_var>=9,"9+", n_var))) %>% 
+  ggplot(aes(n_var, mean, fill=n_var))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_manual(values = hcl.colors(10, palette = "sunset", rev = T))+theme(legend.position = "none")
+```
+
+```{r}
+data%>%mutate(n_var=ifelse(is.na(n_var), "0",ifelse(n_var>=9,"9+", n_var))) %>% 
+  ggplot(aes(median, fill=n_var))+geom_bar(position = "fill")+facet_wrap(~rep)+scale_fill_manual(values = hcl.colors(10, palette = "sunset", rev=T))
+```
+
+### PhyloP Score
+
+```{r}
+data %>% 
+  ggplot(aes( mean, phylo100))+geom_hex()+geom_smooth()+facet_wrap(~rep)+scale_fill_viridis_c()
+```
+
+```{r}
+data %>% ggplot(aes(median, phylo100, fill=median))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_viridis_d()+theme(legend.position  = "none")
+```
+
+```{r}
+data %>% mutate(phylo100=factor(ifelse(phylo100<(-0.5), "very low", 
+                                ifelse(phylo100<0, "low", 
+                                       ifelse(phylo100<0.5, "high", 
+                                              ifelse(phylo100<1, "very high", "very very high")))),levels=c("very low", "low", "high", "very high", "very very high"))) %>% 
+ggplot(aes(median, fill=phylo100))+geom_bar(position = "fill")+facet_wrap(~rep)+scale_fill_manual(values = hcl.colors(10, palette = "sunset", rev=T))
+```
+
+```{r}
+phylo1pb_prom_df<-read_tsv("Tables/phylo100_1pb_lib.tsv")
+data %>% left_join(phylo1pb_prom_df, by=c("seq_id"="name")) %>% group_by(relpos,median,rep) %>% summarise(med_score=median(score, na.rm=T)) %>% 
+  ggplot(aes(relpos-15,med_score, col=median))+geom_line(linewidth=0.2)+xlab("Relative position to TSS")+ylab("Median PhyloP score")+facet_wrap(~rep)+scale_color_viridis_d(end=0.9)+theme(legend.key = element_rect(fill="transparent"))
+```
+
+```{r}
+data %>% left_join(phylo1pb_prom_df, by=c("seq_id"="name")) %>%  mutate(TATA_EPD=ifelse(TATA_EPD, "TATA", "TATA-less"))%>% group_by(relpos,median,rep, TATA_EPD) %>% summarise(med_score=median(score, na.rm=T)) %>% 
+  ggplot(aes(relpos-15,med_score, col=median))+geom_line(linewidth=0.2)+xlab("Relative position to TSS")+ylab("Median PhyloP score")+facet_wrap(~rep+TATA_EPD)+scale_color_viridis_d(end=0.9)+theme(legend.key = element_rect(fill="transparent"))
+```
+
+```{r}
+data %>% left_join(phylo1pb_prom_df, by=c("seq_id"="name")) %>%  mutate(CGI=ifelse(CGI, "with CGI", "without CGI"))%>% group_by(relpos,median,rep, CGI) %>% summarise(med_score=median(score, na.rm=T)) %>% 
+  ggplot(aes(relpos-15,med_score, col=median))+geom_line(linewidth=0.2)+xlab("Relative position to TSS")+ylab("Median PhyloP score")+facet_wrap(~rep+CGI)+geom_smooth(method="gam", linewidth=0.2)+scale_color_viridis_d(end=0.9)+theme(legend.key = element_rect(fill="transparent"))
+```
+
+```{r}
+data %>% left_join(phylo1pb_prom_df, by=c("seq_id"="name")) %>%  mutate(CCAAT_EPD=ifelse(CCAAT_EPD, "with CCAAT", "without CCAAT"))%>% group_by(relpos,median,rep, CCAAT_EPD) %>% summarise(med_score=median(score, na.rm=T)) %>% 
+  ggplot(aes(relpos-15,med_score, col=median))+geom_line(linewidth=0.2)+xlab("Relative position to TSS")+ylab("Median PhyloP score")+facet_wrap(~rep+CCAAT_EPD)+geom_smooth(method="gam", linewidth=0.2)
+```
+
+### Dudnyk et al dataset
+
+#### Preprocessed
+
+```{r}
+data %>% ggplot(aes(median, selectivity_dudnik, fill=median))+geom_violin(alpha=0.7, draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_viridis_d()+theme(legend.position  = "none")
+```
+
+```{r}
+data  %>%ggplot(aes( mean, selectivity_dudnik))+geom_hex()+geom_smooth()+facet_wrap(~rep)+scale_fill_viridis_c()
+```
+
+```{r}
+data  %>% ggplot(aes(median, motif_selectivity_dudnik, fill=median))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_viridis_d()+theme(legend.position  = "none")
+```
+
+```{r}
+data  %>% ggplot(aes(median, dispersion_tissue_dudnik, fill=median))+geom_violin(alpha=0.7, draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_viridis_d()+theme(legend.position  = "none")
+```
+
+```{r}
+data%>% ggplot(aes(median, mean_expr_log10_dudnik, fill=median))+geom_violin(alpha=0.7, draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_viridis_d()+theme(legend.position  = "none")
+```
+
+```{r}
+epd=import.bed("External_data/human38_epdnew.bed")
+motif_contribution_puffin=readxl::read_xlsx("External_data/Dudnik_PUFFIN_science.adj0116_tables_s1_to_s8.xlsx", sheet=3, skip = 1) %>% dplyr::rename(start=`TSS (hg38)`)%>% select(-geneID, -geneName) %>% unique()
+motif_contribution_puffin$end=motif_contribution_puffin$start
+names(motif_contribution_puffin)=str_replace_all(names(motif_contribution_puffin), " ", "_") %>% str_replace("\\+","p") %>% str_replace("-","m")
+motif_contribution_puffin_lib=plyranges::join_overlap_intersect_directed(promoters(epd, upstream=10,downstream =10), GRanges(motif_contribution_puffin)) %>% values() %>% as_tibble() %>% select(-score)
+```
+
+```{r}
+data %>% inner_join(motif_contribution_puffin_lib, by="name") %>% ggplot(aes(median, CREB_p, fill=median))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_viridis_d()+theme(legend.position  = "none")#+ylim(c(-0.5,1))
+```
+
+```{r}
+data %>% inner_join(motif_contribution_puffin_lib, by="name") %>% 
+  ggplot(aes(median, fill=U1_snRNP_p>1))+geom_bar(position = "fill")+facet_wrap(~rep)+scale_fill_manual(values = clrs1[1:2])
+
+```
+
+```{r}
+motif_contribution_puffin_lib%>% pivot_longer(where(is.numeric), names_to="feature", values_to="motif_contribution") %>% inner_join(data, by="name")%>% ggplot(aes(as.numeric(mean_sw), motif_contribution, col=feature, text=feature))+geom_smooth()+facet_wrap(~rep)+xlab("Mean rank group (SW)")#->p
+#plotly::ggplotly(p, tooltip = "text")
+
+motif_contribution_puffin_lib%>% pivot_longer(where(is.numeric), names_to="feature", values_to="motif_contribution") %>% inner_join(data, by="name")%>% ggplot(aes(mean, motif_contribution, col=feature, text=feature))+geom_smooth()+facet_wrap(~rep)+xlab("Mean")#->p
+#plotly::ggplotly(p, tooltip = "text")
+```
+
+#### Re-processed
+
+```{r}
+dudnyk_pred_effects=read_tsv("Tables/Dudnyk_puffin_prediction_summ.tsv")
+data=left_join(data, dudnyk_pred_effects, by="seq_id")
+```
+
+```{r}
+data %>% ggplot(aes(teoTSS_score_pred_puffin, mean))+geom_hex()+geom_smooth()+facet_wrap(~rep)+scale_x_log10()
+```
+
+```{r}
+data %>% ggplot(aes(median, teoTSS_score_pred_puffin, fill=median))+geom_violin(alpha=0.7, draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_viridis_d()+theme(legend.position  = "none")+scale_y_log10()+ylab("Prediction score at pos=0")
+data %>% ggplot(aes(median, TSS20_mean_score_pred_puffin, fill=median))+geom_violin(alpha=0.7, draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_viridis_d()+theme(legend.position  = "none")+scale_y_log10()+ylab("Prediction score \n(mean pos -10 to 10)")
+
+```
+
+```{r}
+data %>% ggplot(aes(pos_max_score_pred_puffin, col=median))+geom_density()+facet_wrap(~rep)+xlab("Maximum prediction score position")
+```
+
+```{r}
+data %>% ggplot(aes(`Sum of initiator effect`, mean))+geom_hex()+geom_smooth()+facet_wrap(~rep)
+data %>% ggplot(aes(median, `Sum of initiator effect`, fill=median))+geom_violin(alpha=0.7, draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_viridis_d()+theme(legend.position  = "none")+scale_y_log10()+ylab("INR effect at pos=0")
+```
+
+```{r}
+data %>% ggplot(aes(`Sum of motif effect`, mean))+geom_hex()+geom_smooth()+facet_wrap(~rep)
+data %>% ggplot(aes(median, `Sum of motif effect`, fill=median))+geom_violin(alpha=0.7, draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_viridis_d()+theme(legend.position  = "none")+scale_y_log10()+ylab("Motif effect at pos=0")
+```
+
+```{r}
+data %>% ggplot(aes(`Sum of trinucleotide effect`, mean))+geom_hex()+geom_smooth()+facet_wrap(~rep)
+data %>% ggplot(aes(median, `Sum of trinucleotide effect`, fill=median))+geom_violin(alpha=0.7, draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_viridis_d()+theme(legend.position  = "none")+scale_y_log10()+ylab("INR effect at pos=0")
+```
+
+```{r}
+data %>% ggplot(aes(`TATA+ motif effect`, mean))+geom_hex()+geom_smooth()+facet_wrap(~rep)
+data %>% ggplot(aes(median, `TATA+ motif effect`, fill=median))+geom_violin(alpha=0.7, draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_viridis_d()+theme(legend.position  = "none")+scale_y_log10()+ylab("TATA+ effect over pos=0")
+```
+
+```{r}
+data %>% group_split(rep) %>% map(~mutate(.x, across(c(mean, ends_with("effect")), row_number))) %>% list_rbind() %>% pivot_longer(ends_with("effect"), values_to = "effect", names_to="motif") %>% ggplot(aes(effect, mean, col=motif, text=motif))+geom_smooth(se=F)+facet_wrap(~rep)+xlab("Feature effect over pos=0")->p
+plotly::ggplotly(p, tooltip="text")
+```
+
+```{r}
+data %>% pivot_longer(ends_with("effect"), values_to = "effect", names_to="motif") %>% mutate(motif=ifelse(str_detect(motif,"Sum of"), str_remove(motif, "effect"),str_remove(motif, "motif effect")) %>% str_remove( "(\\+|\\-)") ) %>%  group_by(motif, rep, seq_id) %>% summarise(effect=sum(effect), mean=unique(mean)) %>% ungroup() %>% group_by(motif, rep) %>% mutate(effect=row_number(effect), mean=row_number(mean)) %>%  ggplot(aes(effect, mean, col=motif, text=motif))+geom_smooth(se=F, method="loess")+facet_wrap(~rep)+xlab("Feature effect rank over pos=0")+ylab("Mean rank")+theme(text=element_text(size=15))->p
+plotly::ggplotly(p, tooltip="text")
+
+```
+
+```{r}
+data=data %>% mutate(prop_motif_effect=abs(`Sum of motif effect`/`Sum of total effect`),prop_init_effect=abs(`Sum of initiator effect`/`Sum of total effect`), prop_trinucl_effect=abs(`Sum of trinucleotide effect`/`Sum of total effect` ))
+data %>% pivot_longer(ends_with("_effect"), names_to = "elements", values_to = "Proportion") %>% ggplot(aes(median, Proportion, fill=elements))+geom_col(position = "fill")+facet_wrap(~rep)
+```
+
+### Co-ocurrance
+
+```{r}
+cors_median=map2(rep(unique(data$rep), 5), rep(unique(data$median), rep(2,5)), 
+          ~data %>% filter(rep==.x, median==.y) %>% select(ends_with("EPD"), CGI, HK,prom_index_g) %>% mutate(across(where(is.character), function(x)as.numeric(as.factor(x)))) %>% 
+            cor() %>% as_tibble()%>% mutate(rep=.x, median=.y, feat=names(.))) %>% list_rbind()
+
+cors_median %>% filter(feat!="TATA_EPD") %>% ggplot(aes(as.numeric(median),TATA_EPD, col=feat))+geom_point()+geom_smooth()+geom_hline(yintercept = 0)+ylab("phi coefficient")+ggtitle("Association with TATA")+xlab("Median")
+
+```
+
+```{r}
+cors_mean=map2(c(rep("Rep 1", 10),rep("Rep 3", 12)), c(1:10, 1:12), 
+          ~data %>% filter(rep==.x, mean_sw%in%seq(.y, .y+9)) %>% select(ends_with("EPD"), CGI, HK,prom_index_g) %>% mutate(across(where(is.character), function(x)as.numeric(as.factor(x)))) %>% 
+            cor() %>% as_tibble()%>% mutate(rep=.x, mean_sw=.y, feat=names(.))) %>% list_rbind()
+cors_mean %>% filter(feat!="TATA_EPD") %>% ggplot(aes(mean_sw,TATA_EPD, col=feat))+geom_point()+geom_smooth()+geom_hline(yintercept = 0)+ylab("phi coefficient")+ggtitle("Association with TATA")+xlab("Mean (SW)")+facet_wrap(~rep)
+```
+
+### Gene Age
+
+```{r}
+#Data from Yin 2016
+ggplot(data %>% filter(prom_index_g=="Main"),aes(mean, `Age class`))+geom_point()+geom_smooth()+facet_wrap(~rep)
+ggplot(data %>% filter(prom_index_g=="Main"),aes(median, `Age class`, fill=median))+geom_violin(draw_quantiles = c(0.25, 0.5, 0.75), alpha=0.7)+facet_wrap(~rep)+scale_fill_viridis_d()+theme(legend.position = "none")
+ggplot(data %>% filter(prom_index_g=="Main", !is.na(`Age class`)),aes(median, fill=`Age class`>24))+geom_bar(position = "fill")+labs(fill="Genes older than\nOpisthokonta divergence")+ggtitle("Main promoters")+scale_fill_manual(values = clrs1[1:2])+facet_wrap(~rep)
+```
+
+### Human-Mouse turnover functional conservation (Young 2015)
+
+```{r}
+data %>% filter( !is.na(turnover)) %>% mutate(ambiguous_alignment=turnover=="ambiguous", expression_turnover=turnover%in%c("expression-turnover", "mouse-diminished"), human_inserted=turnover=="human-inserted", matched=turnover=="matched", mouse_deleted=turnover=="mouse-deleted") %>% pivot_longer(c(ambiguous_alignment,expression_turnover, human_inserted, matched, mouse_deleted, ), values_to="turnovers", names_to = "turnover_name") %>% 
+  ggplot(aes(median, fill=turnovers))+geom_bar(position = "fill")+labs(fill="")+ggtitle("Young et al 2015")+facet_grid(rep~turnover_name)+scale_fill_manual(values = clrs1[1:2])
+```
+
+### Repeated Elements
+
+```{r}
+data %>% ggplot(aes(median, fill=LCR_overlap>0))+geom_bar(position="fill")+scale_fill_manual(values = clrs1[1:2])+facet_wrap(~rep)+labs(fill="LCR repeats")
+data %>% ggplot(aes(LCR_overlap>0, mean, fill=LCR_overlap>0))+geom_violin(draw_quantiles = 0.5)+scale_fill_manual(values = clrs1[1:2])+facet_wrap(~rep)+theme(legend.position = "none")+xlab("LCR repeats")
+
+```
+
+```{r}
+data %>% ggplot(aes(median, fill=TE_overlap>0))+geom_bar(position="fill")+scale_fill_manual(values = clrs1[1:2])+facet_wrap(~rep)+labs(fill="TE repeats")
+data %>% ggplot(aes(TE_overlap>0, mean, fill=TE_overlap>0))+geom_violin(draw_quantiles = 0.5)+scale_fill_manual(values = clrs1[1:2])+facet_wrap(~rep)+theme(legend.position = "none")+xlab("TE repeats")
+data %>% filter(LCR_overlap>0) %>% ggplot(aes(G_C_LCR,mean))+geom_point()+geom_smooth()+facet_wrap(~rep)
+```
+
+```{r}
+data %>% ggplot(aes(median, fill=fct_na_value_to_level(TE_superclass, level="None")))+geom_bar(position="fill")+scale_fill_manual(values = clrs)+facet_wrap(~rep)+labs(fill="TE repeats")
+
+data %>% mutate(TE_superclass=fct_na_value_to_level(TE_superclass, level="None")) %>% ggplot(aes(TE_superclass, mean, fill=TE_superclass))+geom_violin(draw_quantiles = c(0.25,0.75,.5))+facet_wrap(~rep)
+```
+
+```{r}
+data  %>% ggplot(aes(G_C_TE,mean))+geom_point(aes(x=g_c), col="lightgrey",alpha=0.5)+geom_point(aes(col=TE_superclass))+geom_smooth()+facet_wrap(~rep)
+```
+
+### STRING connectivity
+
+##### Full Network
+
+```{r}
+data%>%filter(prom_index==1)  %>% 
+  ggplot(aes(mean,degree_full))+geom_hex()+facet_wrap(~rep)+geom_smooth()+ylab("Connectivity degree (full net)")+scale_fill_viridis_c()+scale_y_log10()
+
+data %>% filter(prom_index==1)  %>% 
+  ggplot(aes(median,degree_full, fill=median))+geom_violin(draw_quantiles = 0.5,alpha=0.2)+facet_wrap(~rep)+geom_jitter(alpha=0.1, size=0.2,width = 0.15)+ylab("Connectivity degree (full net)")+theme(legend.position = "none")+scale_fill_viridis_d()
+```
+
+##### PPI Network
+
+```{r}
+data%>%filter(prom_index==1)  %>% 
+  ggplot(aes(mean,degree_PPI))+geom_hex()+facet_wrap(~rep)+geom_smooth()+ylab("Connectivity degree (PPI net)")+scale_fill_viridis_c()+scale_y_log10()
+
+data %>% filter(prom_index==1)  %>% 
+  ggplot(aes(median,degree_PPI, fill=median))+geom_violin(draw_quantiles = 0.5,alpha=0.2)+facet_wrap(~rep)+geom_jitter(alpha=0.1, size=0.2,width = 0.15)+ylab("Connectivity degree (PPI net)")+theme(legend.position = "none")+scale_fill_viridis_d()
+```
+
+### Tissue specificity
+
+```{r}
+data %>% filter( !is.na(expresion_vbility_class_tissue)) %>% fastDummies::dummy_cols("expresion_vbility_class_tissue") %>%  pivot_longer(starts_with("expresion_vbility_class_tissue_"), values_to="specificity", names_to = "class_name") %>% mutate(class_name=str_remove(class_name, "expresion_vbility_class_tissue_"), specificity=as.logical(specificity)) %>% 
+  ggplot(aes(median, fill=specificity))+geom_bar(position = "fill")+labs(fill="")+facet_grid(rep~class_name)+scale_fill_manual(values = clrs1[1:2])
+```
+
+```{r}
+data %>% ggplot(aes(expresion_vbility_class_tissue, mean))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)
+```
+
+```{r}
+data %>% ggplot(aes(median, gini_tissue))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)
+```
+
+### Shape
+
+```{r}
+data %>% ggplot(aes(median, shape_tissue))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)
+data %>% filter(!is.na(shape_tissue)) %>% mutate(shape=ifelse(shape_tissue>median(shape_tissue), "Broad", "Narrow")) %>% ggplot(aes(median, fill=shape))+geom_bar(position="fill")+facet_wrap(~rep)
+```
+
+### CRM
+
+```{r}
+data%>% ggplot(aes(mean_sw, N_TF_CRM))+geom_point(size=0.1)+facet_wrap(~rep)+geom_smooth()
+data%>% mutate(N_TF_CRM=replace_na(N_TF_CRM,0))%>% ggplot(aes(as.factor(median), N_TF_CRM, fill=as.factor(median)))+
+  geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_viridis_d()+theme(legend.position = "none")+xlab("")
+
+data%>%group_by(mean_sw, rep) %>% summarise(N_TF=median(N_TF_CRM)) %>%  ggplot(aes(mean_sw, N_TF_CRM))+geom_point(size=0.1)+facet_wrap(~rep)+geom_smooth()
+```
+
+### Comparing effect size
+
+Wilcoxon-Mann Whitney test with two blocks.
+
+With the blocks we can calculate a unique p-value per feature an IC for the estimate, but
+
+```{r}
+tidy_data=data  %>% mutate(highGC=g_c>0.5, HK=ifelse(prom_index_g=="Secondary",NA, HK), main_prom=prom_index_g=="Main", ChrX=seqnames=="chrX", expression_turnover=turnover=="expression-turnover") %>%
+  select(mean, rep, contains("EPD"),highGC, CGI, HK,main_prom, ChrX, expression_turnover)%>% mutate(rep=as.factor(rep), across(where(is.logical), ~.x%>% factor(level=c("TRUE","FALSE"))))
+
+library(coin)
+
+wilcox=map(tidy_data %>% select(-mean, -rep), ~coin::wilcox_test(formula=mean~.x|rep, data=tidy_data) %>% pvalue())
+wilcox_rep1=map(tidy_data %>% filter(rep=="Rep 1")%>%  select(-mean,-rep), ~coin::wilcox_test(formula=mean~.x, data=tidy_data%>% filter(rep=="Rep 1"), conf.int=T))
+wilcox_rep3=map(tidy_data %>% filter(rep=="Rep 3")%>%  select(-mean,-rep), ~coin::wilcox_test(formula=mean~.x, data=tidy_data%>% filter(rep=="Rep 3"), conf.int=T))
+
+wilcox_df2=map2(list(wilcox_rep1, wilcox_rep3),c("_rep1","rep3"),
+                ~tibble(feature=names(.x),estimate=map(.x,~confint(.x)$estimate) %>% list_c(), 
+                        P2.5=map(.x,~confint(.x)$conf.int[1]) %>% list_c(),P97.5=map(.x,~confint(.x)$conf.int[2]) %>% list_c() ,
+                        pval=map(.x,pvalue) %>% list_c(), signif=pval>0.05, rep=.y)%>% 
+                  pivot_longer(c(starts_with("estimate"),starts_with("P2.5"), starts_with("P97.5")),names_to = "val", values_to="estimate") %>% arrange(desc(estimate)) %>% mutate(feature=fct_inorder(feature)))
+ggplot()+geom_point(data=wilcox_df2[[1]]%>% filter(val=="estimate"),mapping=aes(feature, estimate), position = position_nudge(x=-0.05))+
+  geom_line(data=wilcox_df2[[1]],mapping=aes(feature, estimate, col="Rep 1"), position = position_nudge(x=-0.05))+
+  geom_point(data=wilcox_df2[[2]] %>% filter(val=="estimate"),mapping=aes(feature, estimate), position = position_nudge(x=0.05))+
+  geom_line(data=wilcox_df2[[2]],mapping=aes(feature, estimate, col="Rep 3"), position = position_nudge(x=0.05))+geom_hline(yintercept = 0)+scale_color_manual(values=c("Rep 1"=clrs[3], "Rep 3"=clrs[4]))+labs(color="")
+
+```
+
+```{r}
+### data=read_tsv("Tables/full_data.tsv")
+tidy_data=data  %>% select(-tissue_enrichment)%>% fastDummies::dummy_cols("TE_superclass", ignore_na = T, omit_colname_prefix=T, remove_selected_columns = T) %>% fastDummies::dummy_cols("expresion_vbility_class_tissue", ignore_na = T, omit_colname_prefix=T, remove_selected_columns = T) %>% 
+  mutate(`High G+C content`=g_c>median(g_c),
+         across(c(DNA, SINE, LINE,LTR), ~replace_na(.x, 0)),
+                          `No activity in mouse`=turnover%in%c("expression-turnover", "mouse-dimished"),
+                          `Deleted in mouse`=turnover=="mouse-deleted",
+                          `Human inserted`=turnover=="human-inserted",
+                          `High TSS predictability`=`Sum of total effect`>median(`Sum of total effect`),
+                          #`High motif effect`=prop_motif_effect>median(prop_motif_effect),
+                          #`High trinucleotide effect`=prop_trinucl_effect>median(prop_trinucl_effect),
+                          #`High initiator effect`=prop_init_effect>median(prop_init_effect),
+                          `Transposable elements`=!is.na(data$TE_superclass),
+                          `Low Complexity Repeats`=LCR_overlap>0,
+                          `High conservation (16 to -50pb)`=close_phylo100>1,
+                          `High conservation (-50 to -150)`=intermediate_phylo100>1,
+                          `High conservation (-150 to -235)`=far_phylo100>1,
+                          `Old genes`= `Age class`>24,
+                          `High tissue specificity`=gini_tissue>median(gini_tissue, na.rm=T),
+                          `Narrow promoters`=shape_tissue<median(shape_tissue, na.rm=T),
+                          #`High activity in HEK293`=hek_tpm>median(data$hek_tpm[data$hek_tpm>0])
+                          `High activity in HEK293`=hek_tpm>mean(data$hek_tpm),
+                          `Cis Regulatory Module`=N_TF_CRM>0
+
+
+                          ) %>%
+  dplyr::rename(
+    `TATA-box (EPD)`=TATA_EPD,
+    `CCAAT (EPD)` = CCAAT_EPD,
+    `GC-box (EPD)` = GCbox_EPD,
+    `CpG islands`=CGI,
+    Retrotransposon=DNA,
+    TCT=TCT_TSS,
+    `CG at TSS`=CG_TSS,
+    `TA at TSS`=TA_TSS,
+    `TG at TSS`=TG_TSS,
+    `CA at TSS`=CA_TSS,
+    `Non canonical TSS`=other_TSS,
+    `Strong TSS`=INR_strong_TSS,
+    `Ubiquitous (FANTOM5)`=all_tissues_detected,
+    `Enriched expression in a few tissues (FANTOM5)` = group_enrichment,
+    `Enriched expression in a one tissues (FANTOM5)` = tissue_enrichment,
+    `Non detected activity (FANTOM5)`= non_detected 
+  ) %>% 
+  select(mean, rep,
+         LINE,
+         SINE,
+         LTR,
+         `High G+C content`,
+         `No activity in mouse`,
+         `Human inserted`,
+         `High TSS predictability`,
+         #`High motif effect`,
+         #`High trinucleotide effect`,
+         #`High initiator effect`,
+         `Transposable elements`,
+         `Low Complexity Repeats`,
+         `High conservation (16 to -50pb)`,
+         `High conservation (-50 to -150)`,
+         `High conservation (-150 to -235)`,
+         `Old genes`,
+         `TATA-box (EPD)`,
+         `CCAAT (EPD)`,
+         `GC-box (EPD)`,
+         `CpG islands`,
+         Retrotransposon,
+         TCT,
+         `CG at TSS`,
+         `TA at TSS`,
+         `TG at TSS`,
+         `CA at TSS`,
+         `Non canonical TSS`,
+         `Strong TSS`,
+         `Ubiquitous (FANTOM5)`,
+         `Enriched expression in a few tissues (FANTOM5)`,
+        `Enriched expression in a one tissues (FANTOM5)`,
+        `Non detected activity (FANTOM5)`,
+        `High tissue specificity`,
+        `Narrow promoters`,
+        `High activity in HEK293`,
+        `Cis Regulatory Module`
+         )%>%
+  mutate(across(where(~ is.numeric(.x) && mean(.x)<1), as.logical), rep=as.factor(rep), across(where(is.logical), ~.x%>% factor(level=c("TRUE","FALSE")))) 
+```
+
+```{r}
+# library(coin)
+# 
+# n_features=tidy_data %>% select(-mean) %>% group_by(rep) %>% summarise(across(everything(), function(x)as.logical(x) %>% sum(na.rm=T) %>% magrittr::divide_by(n()))) %>% pivot_longer(-rep, names_to = "feature", values_to = "prop")
+# 
+# wilcox=map(tidy_data %>% select(-mean, -rep), ~coin::wilcox_test(formula=mean~.x|rep, data=tidy_data) %>% pvalue())
+# wilcox_rep1=map(tidy_data %>% filter(rep=="Rep 1")%>%  select(-mean,-rep), ~coin::wilcox_test(formula=mean~.x, data=tidy_data%>% filter(rep=="Rep 1"), conf.int=T))
+# wilcox_rep2=map(tidy_data %>% filter(rep=="Rep 2")%>%  select(-mean,-rep), ~coin::wilcox_test(formula=mean~.x, data=tidy_data%>% filter(rep=="Rep 2"), conf.int=T))
+# 
+# wilcox_df2=map2(list(wilcox_rep1, wilcox_rep2),c("Rep 1","Rep 2"),
+#                 ~tibble(feature=names(.x),estimate=map(.x,~confint(.x)$estimate) %>% list_c(), 
+#                         P2.5=map(.x,~confint(.x)$conf.int[1]) %>% list_c(),P97.5=map(.x,~confint(.x)$conf.int[2]) %>% list_c() ,
+#                         pval=map(.x,pvalue) %>% list_c(), signif=pval>0.05, rep=.y)%>% 
+#                   pivot_longer(c(starts_with("estimate"),starts_with("P2.5"), starts_with("P97.5")),names_to = "val", values_to="estimate") %>% arrange(desc(estimate)) %>% mutate(feature=fct_inorder(feature))) %>% list_rbind()
+# 
+# wilcox_df2 %>% arrange(estimate) %>% mutate(act=ifelse(sign(estimate)==1,"High activity", "Low activity")) %>% pivot_wider(names_from = val, values_from = estimate) %>% left_join(n_features) %>% filter(signif==F) %>% 
+#   ggplot(aes(x=ifelse(rep=="Rep 1", -abs(estimate), abs(estimate)), y=fct_inorder(feature)))+geom_col(orientation="y", position="identity", aes(alpha=prop, fill=act))+geom_vline(xintercept = 0, linetype="dashed")+labs(y="Features", x="Activity effect", alpha="% of promoters", fill="Effect")+xlim(c(-.35,0.4))+geom_errorbarh(data=~.x%>% filter(rep=="Rep 1"), aes(xmax=-abs(P2.5) , xmin=-abs(P97.5)), height=0.01, col="#999999")+geom_errorbarh(data=~.x%>% filter(rep=="Rep 2"), aes(xmax=abs(P2.5) , xmin=abs(P97.5)), height=0.01, col="#999999")
+```
+
+```{r}
+# write_tsv(tibble(feature=names(tidy_data)), "Tables/tidy_names.tsv")
+tidy_names=read_tsv( "Tables/tidy_names.tsv")
+names(tidy_data)[match(tidy_names$feature, names(tidy_data)) %>% na.exclude()]<- tidy_names$new_name
+n_features=tidy_data %>% select(-mean) %>% group_by(rep) %>% summarise(across(everything(), function(x)as.logical(x) %>% sum(na.rm=T) %>% magrittr::divide_by(n()))) %>% pivot_longer(-rep, names_to = "feature", values_to = "prop")
+vbles_split=map(c("seq","endo"), ~tidy_names$new_name[tidy_names$choose&(tidy_names$group==.x)] %>% na.exclude()) 
+#wilcox
+wilcox=map(tidy_data %>% select(-mean, -rep), ~coin::wilcox_test(formula=mean~.x|rep, data=tidy_data) %>% pvalue())
+wilcox=tibble(feature=names(wilcox), pval=list_c(wilcox), pval_corr=p.adjust(pval, "BH", length(wilcox)))
+wilcox_rep1=map(tidy_data %>% filter(rep=="Rep 1")%>%  select(-mean,-rep), ~coin::wilcox_test(formula=mean~.x, data=tidy_data%>% filter(rep=="Rep 1"), conf.int=T))
+wilcox_rep2=map(tidy_data %>% filter(rep=="Rep 2")%>%  select(-mean,-rep), ~coin::wilcox_test(formula=mean~.x, data=tidy_data%>% filter(rep=="Rep 2"), conf.int=T))
+
+wilcox_df2=map2(list(wilcox_rep1, wilcox_rep2),c("Rep 1","Rep 2"),
+                ~tibble(feature=names(.x),estimate=map(.x,~confint(.x)$estimate) %>% list_c(), 
+                        P2.5=map(.x,~confint(.x)$conf.int[1]) %>% list_c(),P97.5=map(.x,~confint(.x)$conf.int[2]) %>% list_c() ,
+                          rep=.y)%>% 
+                  pivot_longer(c(starts_with("estimate"),starts_with("P2.5"), starts_with("P97.5")),names_to = "val", values_to="estimate") %>% arrange(desc(estimate)) %>% mutate(feature=fct_inorder(feature))) %>% list_rbind() %>% left_join(wilcox)
+
+# wilcox_df2=map2(list(wilcox_rep1, wilcox_rep2),c("Rep 1","Rep 2"),
+#                 ~tibble(feature=names(.x),estimate=map(.x,~confint(.x)$estimate) %>% list_c(), 
+#                         P2.5=map(.x,~confint(.x)$conf.int[1]) %>% list_c(),P97.5=map(.x,~confint(.x)$conf.int[2]) %>% list_c() ,
+#                         pval=map(.x,pvalue) %>% list_c(), signif=pval>0.05, rep=.y)%>% 
+#                   pivot_longer(c(starts_with("estimate"),starts_with("P2.5"), starts_with("P97.5")),names_to = "val", values_to="estimate") %>% arrange(desc(estimate)) %>% mutate(feature=fct_inorder(feature))) %>% list_rbind()
+
+# wilcox_df2 %>% filter(feature%in% vbles_split[[1]]) %>% arrange(estimate) %>% mutate(act=ifelse(sign(estimate)==1,"High activity", "Low activity")) %>% pivot_wider(names_from = val, values_from = estimate) %>% left_join(n_features) %>% filter(signif==F) %>% 
+#   ggplot(aes(x=ifelse(rep=="Rep 1", -abs(estimate), abs(estimate)), y=fct_inorder(feature)))+geom_col(orientation="y", position="identity", aes(alpha=prop, fill=act))+geom_vline(xintercept = 0, linetype="dashed")+labs(y="Features", x="Activity effect", alpha="% of promoters", fill="Effect")+xlim(c(-.35,0.4))+geom_errorbarh(data=~.x%>% filter(rep=="Rep 1"), aes(xmax=-abs(P2.5) , xmin=-abs(P97.5)), height=0.01, col="#999999")+geom_errorbarh(data=~.x%>% filter(rep=="Rep 2"), aes(xmax=abs(P2.5) , xmin=abs(P97.5)), height=0.01, col="#999999")
+
+
+
+wilcox_df2 %>% filter(feature%in% vbles_split[[2]]) %>% arrange(estimate) %>% mutate(act=ifelse(sign(estimate)==1,"High activity", "Low activity")) %>% pivot_wider(names_from = val, values_from = estimate) %>% left_join(n_features) %>% filter(pval_corr<0.05) %>%  ggplot(aes(x=ifelse(rep=="Rep 1", -abs(estimate), abs(estimate)), y=fct_inorder(feature)))+geom_col(orientation="y", position="identity", aes( fill=act), alpha=0.8)+geom_vline(xintercept = 0, linetype="dashed")+labs(y="Features", x="Activity effect", fill="Effect")+xlim(c(-max(abs(wilcox_df2$estimate)),max(abs(wilcox_df2$estimate))))+geom_errorbarh(data=~.x%>% filter(rep=="Rep 1"), aes(xmax=-abs(P2.5) , xmin=-abs(P97.5)), height=0.01, col="#777777",  linewidth=1.5)+geom_errorbarh(data=~.x%>% filter(rep=="Rep 2"), aes(xmax=abs(P2.5) , xmin=abs(P97.5)), height=0.01, col="#777777", linewidth=1.5)+theme(text=element_text(size=20))+scale_fill_manual(values=c("Low activity"="#14AFB2", "High activity"="#E0777D"))
+
+#+scale_fill_manual(values=c("Low activity"="#8CC7A1", "High activity"="#816E94")) #poster option
+#+scale_fill_manual(values=c("Low activity"="#00CC99", "High activity"="#963484"))
+```

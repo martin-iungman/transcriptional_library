@@ -1,0 +1,1067 @@
+---
+title: "Feature association Variance stratified by Median (w/norm)"
+author: "Martin Iungman"
+output-file: "split_variance_median_norm.html"
+---
+
+```{r}
+library(tidyverse)
+library(ggmosaic)
+library(patchwork)
+theme_set(theme_bw())
+stats=read_tsv("Tables/noise/stats_rep_noise2023.tsv")
+stats=stats%>%filter(sum_norm_counts>1000)%>%mutate(median=factor(floor(median))) %>% mutate(rep=paste("Rep",rep))
+clrs=ghibli::ghibli_palette(name="PonyoMedium")
+clrs2=wesanderson::wes_palette(name="GrandBudapest2")
+rename=dplyr::rename
+```
+
+Last update: `r Sys.Date()`
+
+Used variable for median: `r "Median"`
+
+Used variable for var: `r disp`
+
+Only for sequences with more than 1000 total raw counts
+
+Total number of different sequences for each rep:
+
+```{r}
+#| echo: false
+table(stats$rep)
+```
+
+## Association Expression-Variability
+
+```{r}
+ggplot(stats, aes(mean, entropy, col=factor(positive_gates)))+geom_point(size=0.1)+labs(col="positive_gates")+facet_wrap(~rep)
+```
+
+```{r}
+ggplot(stats, aes(mean, var, col=factor(median)))+geom_point(size=0.1)+facet_wrap(~rep)
+```
+
+```{r}
+ggplot(stats, aes(factor(mode), var,  col=factor(positive_gates)))+geom_boxplot(outlier.size = 0.5)+labs(col="positive_gates")+xlab("Mode")+facet_wrap(~rep)
+
+```
+
+```{r}
+ggplot(stats, aes(factor(median), entropy,  col=factor(positive_gates)))+geom_boxplot(outlier.size = 0.5)+labs(col="positive_gates")+xlab("Median")+facet_wrap(~rep)
+```
+
+### Selecting bimodal patterns by high variance
+
+We could classify these discrete patterns by their concavity. Positive concavity has lower variance, and uniform increasing/decreasing patterns too. Cases of homogeneity has a higher variance, and the ideal case can be calculated which depends only on the number of discrete values involved. And the cases with negative concavity, similar to bimodality sometimes, have an even higher variance.
+
+To distinguish the negative concavity patterns, we can assume that they will have higher variance than the expected for the homogeneity case, given the number of active gates (k). The formula for the perfect homogenetiy case varies if *k* is odd or even.
+
+$$
+if\ k\ is\ even: \\  
+var_{(k)}= 2*\sum^{k/2}_{i=1}(i-0.5)^2 \\  
+$$
+
+$$
+if\ k\ is\ odd: \\  
+var_{(k)}= 2*\sum^{(k-1)/2}_{i=1}i^2
+$$
+
+```{r}
+max_var=function(k){
+  if(k%%2==1){
+    return((sum(seq(0, (k-1)/2)^2)*2)/k)
+  }
+  if(k%%2==0){
+    return((sum((seq(1, k/2)-0.5)^2)*2)/k)
+  }
+}
+
+stats$max_var=sapply(stats$positive_gates,max_var)
+ggplot(stats, aes(mean, var))+geom_point(size=0.5, col=clrs[3])+labs(col="positive_gates")+facet_wrap(~rep)+gghighlight::gghighlight(var>max_var*1.2)+ylab("Variance")
+```
+
+For the next analysis the sequences with variance higher than the 120% of the homogeneity variance (for the given k positive gates), are ommited.
+
+### Splitting var by median
+
+```{r}
+stats=stats%>%filter(var<=max_var*1.2)%>%
+  mutate(median=factor(ifelse(median%in%c(5,6), "5+6", median)))
+ggplot(stats, aes(median, var,  col=factor(positive_gates)))+geom_jitter(size=0.2, alpha=0.5)+labs(col="positive_gates")+xlab("Median")+ylab("Variance")+facet_wrap(~rep)
+```
+
+```{r}
+prom_df=read_tsv("Tables/prom_df.tsv")
+data=inner_join(stats, prom_df)  %>%group_by(median) %>%  mutate(var_rank=dense_rank(var), entropy_rank=dense_rank(entropy), var_rank_rel=var_rank/max(var_rank), entropy_rank_rel=entropy_rank/max(entropy_rank))
+```
+
+```{r}
+inconsistent_median=data  %>% select(seq_id, median, rep) %>% pivot_wider(names_from = rep, values_from = median) %>%mutate(median_dif=abs(as.numeric(`Rep 1`)-as.numeric(`Rep 2`))) %>% filter(median_dif>1) %>% select(seq_id) %>% as_vector()
+pre_data=data
+data=data %>% filter(!seq_id%in%inconsistent_median)
+```
+
+```{r}
+df_split_filt=map(stats %>%  group_split(median,rep), ~.x%>%inner_join(prom_df)%>%mutate(disp_rank=row_number(var)/nrow(.))%>%filter(disp_rank<0.2 | disp_rank>0.8)%>%mutate(var_lvl=ifelse(disp_rank<0.2, "concentrated", "disperse")))%>%list_rbind()
+df_split_filt%>%ggplot(aes(var, col=var_lvl))+geom_density()+facet_wrap(~median+rep, nrow=6, ncol=2)+labs(col="Variance")+xlab("Variance")+scale_color_manual(values = clrs2[c(2,3)])
+```
+
+```{r}
+df_split_filt%>%select(median,var_lvl,rep)%>%table()
+```
+
+```{r}
+df_split_filt%>%
+  ggplot(aes(factor(median), mean, fill=var_lvl))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+labs(fill="Variance")+facet_wrap(~rep)+scale_fill_manual(values = clrs2[c(2,3)])
+```
+
+```{r}
+data %>% ggplot(aes(sqrt(var),mean, col=median))+geom_smooth(method="lm")+scale_color_viridis_d()+facet_wrap(~rep)+labs(col="Median")+geom_point(size=0.1)+xlab("standard deviation")
+```
+
+```{r}
+r=data %>% select(median,rep,mean,var, seq_id)%>% nest(data=c(-median, -rep)) %>% mutate(model=map(data, ~lm(sqrt(.x$var)~.x$mean)), tidied_model=map(model,broom::tidy), res=map2(data,model, ~broom::augment(.y, data=.x) %>% mutate(seq_id=.x$seq_id))) %>% unnest(res)
+r %>% ggplot(aes(`.std.resid`,mean,col=median))+geom_point(size=0.1)+geom_smooth(method="lm")+scale_color_viridis_d()+facet_wrap(~rep)+xlab("Residuals sd ~ mean, for each median")
+data=r %>% select(rep,seq_id,.std.resid) %>% dplyr::rename(sd_corr=.std.resid) %>% inner_join(data, by=c("seq_id","rep", "median"))
+data=data %>% group_by(median,rep) %>%  mutate(sd_corr_rank=dense_rank(sd_corr), sd_corr_rank_rel=sd_corr_rank/max(sd_corr_rank), sd_corr_group=ifelse(sd_corr_rank_rel<0.2, "low noise", ifelse(sd_corr_rank_rel>0.8, "high noise", NA))) %>% ungroup()
+```
+
+```{r}
+data  %>% select(seq_id, median, sd_corr_rank_rel, rep) %>% pivot_wider(names_from = rep, values_from = c(sd_corr_rank_rel, median)) %>% ggplot(aes(`sd_corr_rank_rel_Rep 1`, `sd_corr_rank_rel_Rep 3`, col=`median_Rep 1`))+geom_point(size=0.3, alpha=0.2)+geom_smooth()+xlab("SD residuals - Rep 1")+ylab("SD residuals - Rep 3")+labs(col="Median (Rep 1)")+scale_color_viridis_d(option="G")
+
+data  %>% select(seq_id, median, sd_corr_rank_rel, rep) %>% pivot_wider(names_from = rep, values_from = c(sd_corr_rank_rel, median)) %>%mutate(median_dif=factor(abs(as.numeric(`median_Rep 1`)-as.numeric(`median_Rep 3`)))) %>% filter(median_dif%in%0:2) %>%  ggplot(aes(`sd_corr_rank_rel_Rep 1`, `sd_corr_rank_rel_Rep 3`,col=median_dif))+geom_point(size=0.3, alpha=0.2)+geom_smooth()+facet_wrap(~`median_Rep 1`)+xlab("SD residuals - Rep 1")+ylab("SD residuals - Rep 3")+labs(col="Median \ndifference")+scale_color_viridis_d(option="G")
+
+data  %>% select(seq_id, sd_corr_group, rep) %>% mutate(sd_corr_group=forcats::fct_na_value_to_level(sd_corr_group, level="Average noise"))%>% pivot_wider(names_from = rep, values_from = c(sd_corr_group)) %>% select(-seq_id) %>% table() %>% as.matrix() %>% chisq.test() %>% residuals() %>% corrplot::corrplot(is.corr = F) 
+
+pre_data  %>% select(seq_id, median, sd_corr_rank_rel, rep) %>% pivot_wider(names_from = rep, values_from = c(sd_corr_rank_rel, median)) %>% mutate(median_dif=factor(abs(as.numeric(`median_Rep 1`)-as.numeric(`median_Rep 3`))), dif_sd=abs(`sd_corr_rank_rel_Rep 1`-`sd_corr_rank_rel_Rep 3`)) %>% filter(median_dif!=4) %>% ggplot(aes(dif_sd, fill=median_dif))+geom_density(alpha=0.3)+scale_fill_viridis_d(option = "G")+xlab("Rank difference (SD residual)")+labs(fill="Median \ndifference")
+
+library(ggsankey)
+pre_data%>%ungroup() %>%filter(!is.na(sd_corr_group)) %>%  mutate(median=str_c(as.character(median), sd_corr_group)) %>%select(seq_id, rep,median) %>% pivot_wider(names_from = "rep", values_from = "median")%>% filter(!is.na(`Rep 1`), !is.na(`Rep 3`)) %>% 
+  make_long(`Rep 1`,`Rep 3`)%>%mutate(col=str_remove(node,"^.")==str_remove(next_node,"^.")) %>% 
+  ggplot(aes(x = x, 
+             next_x = next_x, 
+             node = node, 
+             next_node = next_node,
+             fill = col,
+             label = node)) +
+  geom_sankey(flow.alpha = 0.5, node.color = 1) +
+  geom_sankey_label(size = 1, color = 1, fill = "white") +
+  theme_sankey(base_size = 16)
+```
+
+### Sliding Window
+
+```{r}
+roc_curve=function(data, feature){
+map(1:99, ~data  %>% count(gr=var_rank_sw>.x, across(all_of({{feature}}))) %>% mutate(threshold=.x)) %>% list_rbind() %>% pivot_wider(names_from = c(gr,{{feature}}), values_from = n) %>% 
+  mutate(TPR=TRUE_TRUE/(TRUE_TRUE+FALSE_TRUE),FPR=TRUE_FALSE/(FALSE_FALSE+TRUE_FALSE)) %>% arrange(FPR)}
+
+auc=function(roc){
+sum=0
+for(i in 1:(nrow(roc)-1)){
+  deltax=roc$FPR[i+1]-roc$FPR[i]
+  deltay=roc$TPR[i+1]-roc$TPR[i]
+  sum=sum(sum, deltax*roc$TPR[i]+deltax*deltay/2, na.rm=T)
+}
+return(sum)
+}
+
+excess=data %>% group_by(rep) %>% summarise(excess=n()%%100)
+data=data %>% ungroup() %>% group_split(rep) %>% map2(excess$excess, ~.x %>% mutate(mean_rank_sw=row_number(mean)) %>% filter(mean_rank_sw>.y) %>% mutate(mean_rank_sw=row_number(mean), mean_sw=factor(ceiling(mean_rank_sw/100))) %>% group_by(rep, mean_sw) %>% mutate(var_rank_sw=row_number(var)) %>% ungroup()) %>% bind_rows()
+
+data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=median))+geom_point(size=0.05)+facet_wrap(~rep)+scale_color_viridis_d()+ylab("Variance rank (SW)")+xlab("Mean rank group")
+
+data %>% mutate(sd_corr_group=forcats::fct_na_value_to_level(sd_corr_group, level="Average noise")) %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=sd_corr_group))+geom_point(size=0.05)+facet_wrap(~rep)+xlab("Mean rank group")+ylab("Variance rank (SW)")+labs(col="Approach 2 groups")+scale_color_manual(values =c( clrs2[c(2,3)], "grey"))
+```
+
+### Promoter Features
+
+#### GC content
+
+```{r}
+data%>%filter(!is.na(sd_corr_group)) %>% 
+  ggplot(aes(factor(median), g_c, fill=sd_corr_group))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+labs(fill="Group")+facet_wrap(~rep)+ylab("G+C content")+scale_fill_manual(values = clrs2[c(2,3)])
+```
+
+```{r}
+data%>%filter(!is.na(sd_corr_group)) %>% 
+  ggplot(aes(factor(rep), g_c, fill=sd_corr_group))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+labs(fill="Group")+ylab("G+C content")+scale_fill_manual(values = clrs2[c(1,4)])
+```
+
+```{r}
+data %>% 
+  ggplot(aes(sd_corr_rank_rel,g_c, col=median))+geom_smooth()+scale_color_viridis_d()+ylab("G+C content")+facet_wrap(~rep)+labs(col=eval("Median"))+geom_point(size=0.1,alpha=0.1)
+data %>% 
+  ggplot(aes(sd_corr_rank_rel,g_c, col=median))+geom_smooth()+scale_color_viridis_d()+ylab("G+C content")+facet_wrap(~rep)+labs(col=eval("Median"))+xlab("SD residuals")
+```
+
+```{r}
+data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=g_c>0.5))+geom_point(size=0.05, alpha=0.7)+facet_wrap(~rep)+xlab("Mean rank")+ylab("Variance rank")+geom_smooth(method = "loess")+labs(col="[G+C]>0.5")+scale_color_manual(values = clrs2[c(1,4)])
+```
+
+```{r}
+data %>%mutate(g_c=g_c>0.5) %>%  ungroup() %>% group_split(rep) %>% 
+  map(~roc_curve(.x, g_c) %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("[G+C]>0.5 ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+#### CGI
+
+```{r}
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(median, sd_corr_group), fill=CGI))+ylab("Median")+facet_wrap(~rep)+scale_fill_manual(values = clrs2[c(1,4)])+xlab("Noise")+theme(axis.text.x = element_text(size=10), axis.ticks.x = element_blank())+scale_x_productlist(labels=c("High","High","Low", "Low"))
+
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group), conds=product(median), fill=CGI))+xlab("Median")+facet_wrap(~rep)+scale_fill_manual(values = clrs2[c(1,4)])+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank())+scale_x_productlist(labels=paste0(levels(data$median),"  ") %>% strsplit(" ") %>% unlist())
+
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group,rep), fill=CGI))+ylab("Median")+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank())+scale_x_productlist(labels=paste0(levels(factor(data$rep)),"   ") %>% strsplit("  ") %>% unlist())+scale_fill_manual(values = clrs2[c(1,4)])
+
+data %>% ggplot(aes(median, sd_corr, fill=CGI))+geom_violin(draw_quantiles = 0.5)+scale_fill_manual(values = clrs2[c(1,4)])+facet_wrap(~rep)
+```
+
+```{r}
+data %>% filter(width_cgi_overlap>0) %>%  ggplot(aes(width_cgi_overlap, sd_corr_rank_rel, col=median))+geom_smooth()+facet_wrap(~rep)+geom_point(size=0.1)+scale_color_viridis_d()
+data %>% ggplot(aes(width_cgi_overlap, sd_corr_rank_rel))+geom_hex()+geom_smooth()+facet_wrap(~rep)
+```
+
+```{r}
+data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=CGI))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank group")+ylab("Variance rank (SW)")+geom_smooth()+labs(col="CpG island")+scale_color_manual(values = clrs2[c(1,4)])
+```
+
+```{r}
+data %>% ungroup() %>% group_split(rep) %>% 
+  map(~roc_curve(.x, "CGI") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("CGI ROC curve")+scale_color_manual(values=clrs[3:4])
+
+```
+
+#### Promoter index
+
+```{r}
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(median, sd_corr_group), fill=prom_index_g))+ylab("Median")+facet_wrap(~rep)+scale_fill_manual(values = clrs2[c(1,4)])+xlab("Noise")+theme(axis.text.x = element_text(size=10), axis.ticks.x = element_blank())+scale_x_productlist(labels=c("High","High","Low", "Low"))+labs(fill="")
+
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group), conds=product(median), fill=prom_index_g))+xlab("Median")+facet_wrap(~rep)+scale_fill_manual(values = clrs2[c(1,4)])+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank())+scale_x_productlist(labels=paste0(levels(data$median),"  ") %>% strsplit(" ") %>% unlist())
+
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group,rep), fill=prom_index_g))+ylab("Median")+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank())+scale_x_productlist(labels=paste0(levels(factor(data$rep)),"   ") %>% strsplit("  ") %>% unlist())+scale_fill_manual(values = clrs2[c(1,4)])
+
+data %>% ggplot(aes(median, sd_corr, fill=prom_index_g))+geom_violin(draw_quantiles = 0.5)+scale_fill_manual(values = clrs2[c(1,4)])+facet_wrap(~rep)+ylab("SD residuals")+labs(fill="")
+```
+
+```{r}
+data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=prom_index_g))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank")+ylab("Variance rank")+geom_smooth()+labs(col="")+scale_color_manual(values = clrs2[c(1,4)])
+```
+
+```{r}
+data %>%mutate(prom_index_g=prom_index_g=="Main") %>%  ungroup() %>% group_split(rep) %>% 
+  map(~roc_curve(.x, "prom_index_g") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("Alternative promoter ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+#### Alternative promoters in library (P1 proms)
+
+```{r}
+data%>%filter(prom_index==1) %>% filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group), conds=product(median), fill=n_prom_g))+xlab("Median")+facet_wrap(~rep)+scale_fill_manual(values = clrs[c(2,3,4)])+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank())+scale_x_productlist(labels=paste0(levels(data$median),". . ") %>% strsplit("\\.") %>% unlist())+ylab("")+labs(fill="Alternative \npromoters")+ggtitle("Main promoters")
+
+data  %>%filter(prom_index==1)  %>% ggplot(aes(median, sd_corr, fill=n_prom_g))+geom_violin(draw_quantiles = 0.5)+scale_fill_manual(values = clrs[2:4])+facet_wrap(~rep)+ylab("")+labs(fill="Alternative \npromoters")+ggtitle("Main promoters")
+```
+
+```{r}
+data %>%filter(prom_index==1)%>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=n_prom_g))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank")+ylab("Variance rank")+geom_smooth()+labs(col="")+scale_color_manual(values = clrs[2:4])
+```
+
+```{r}
+data  %>%  ungroup()%>%mutate(n_prom_g=n_prom_g=="1") %>% group_split(rep) %>% 
+  map(~roc_curve(.x, "n_prom_g") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("N alt promoter ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+#### HK
+
+```{r}
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(median, sd_corr_group), fill=HK))+ylab("Median")+facet_wrap(~rep)+scale_fill_manual(values = clrs2[c(1,4)])+xlab("Noise")+theme(axis.text.x = element_text(size=10), axis.ticks.x = element_blank())+scale_x_productlist(labels=c("High","High","Low", "Low"))
+
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group), conds=product(median), fill=HK))+xlab("Median")+facet_wrap(~rep)+scale_fill_manual(values = clrs2[c(1,4)])+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank())+scale_x_productlist(labels=paste0(levels(data$median),"  ") %>% strsplit(" ") %>% unlist())
+
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group,rep), fill=HK))+ylab("Median")+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank())+scale_x_productlist(labels=paste0(levels(factor(data$rep)),"   ") %>% strsplit("  ") %>% unlist())+scale_fill_manual(values = clrs2[c(1,4)])
+
+data %>% ggplot(aes(median, sd_corr, fill=HK))+geom_violin(draw_quantiles = 0.5)+scale_fill_manual(values = clrs2[c(1,4)])+facet_wrap(~rep)
+```
+
+```{r}
+data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=HK))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank")+ylab("Variance rank")+geom_smooth()+labs(col="")+scale_color_manual(values = clrs2[c(1,4)])
+```
+
+```{r}
+data  %>%  ungroup() %>% group_split(rep) %>% 
+  map(~roc_curve(.x, "HK") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("Alternative promoter ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+#### TF
+
+```{r}
+data %>% filter(prom_index_g=="Main") %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=TF))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank")+ylab("Variance rank")+geom_smooth()+labs(col="")+scale_color_manual(values = clrs2[c(1,4)])
+data %>% filter(prom_index_g=="Main") %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=TF_highconf))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank")+ylab("Variance rank")+geom_smooth()+labs(col="")+scale_color_manual(values = clrs2[c(1,4)])
+```
+
+#### TATA
+
+```{r}
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(median, sd_corr_group), fill=TATA_EPD))+ylab("Median")+facet_wrap(~rep)+scale_fill_manual(values = clrs2[c(1,4)])+xlab("Noise")+theme(axis.text.x = element_text(size=10), axis.ticks.x = element_blank())+scale_x_productlist(labels=c("High","High","Low", "Low"))
+
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group), conds=product(median), fill=TATA_EPD))+xlab("Median")+facet_wrap(~rep)+scale_fill_manual(values = clrs2[c(1,4)])+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank())+scale_x_productlist(labels=paste0(levels(data$median),"  ") %>% strsplit(" ") %>% unlist())
+
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group,rep), fill=TATA_EPD))+ylab("Median")+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank())+scale_x_productlist(labels=paste0(levels(factor(data$rep)),"   ") %>% strsplit("  ") %>% unlist())+scale_fill_manual(values = clrs2[c(1,4)])
+
+
+data %>% ggplot(aes(median, sd_corr, fill=TATA_EPD))+geom_violin(draw_quantiles = 0.5)+scale_fill_manual(values = clrs2[c(1,4)])+facet_wrap(~rep)
+```
+
+```{r}
+data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=TATA_EPD))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank group")+ylab("Variance rank (SW)")+geom_smooth()+labs(col="TATA-box \n(EPD)")+scale_color_manual(values = clrs2[c(1,4)])
+```
+
+```{r}
+data  %>%  ungroup() %>% group_split(rep) %>% 
+  map(~roc_curve(.x, "TATA_EPD") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("TATA (EPD) ROC curve")+scale_color_manual(values=clrs[3:4])
+
+data  %>%  ungroup() %>% group_split(rep, as.numeric(mean_sw)>70) %>% 
+    map(~roc_curve(.x, "TATA_EPD") %>% mutate(rep=unique(.x$rep), gr=ifelse(min(as.numeric(.x$mean_sw))<70, "low expression", "high_expression"),AUC=auc(.))) %>% list_rbind()%>% 
+    ggplot(aes(FPR,TPR, col=rep, linetype=gr))+geom_line()+geom_abline(linetype="dashed")+
+    geom_text(data=.%>% select(AUC, rep,gr) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8, 0.7,0.6), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("TATA ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+#### INR
+
+```{r}
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(median, sd_corr_group), fill=INR_EPD))+ylab("Median")+facet_wrap(~rep)+scale_fill_manual(values = clrs2[c(1,4)])+xlab("Noise")+theme(axis.text.x = element_text(size=10), axis.ticks.x = element_blank())+scale_x_productlist(labels=c("High","High","Low", "Low"))
+
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group), conds=product(median), fill=INR_EPD))+xlab("Median")+facet_wrap(~rep)+scale_fill_manual(values = clrs2[c(1,4)])+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank())+scale_x_productlist(labels=paste0(levels(data$median),"  ") %>% strsplit(" ") %>% unlist())
+
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group,rep), fill=INR_EPD))+ylab("Median")+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank())+scale_x_productlist(labels=paste0(levels(factor(data$rep)),"   ") %>% strsplit("  ") %>% unlist())+scale_fill_manual(values = clrs2[c(1,4)])
+
+
+data %>% ggplot(aes(median, sd_corr, fill=INR_EPD))+geom_violin(draw_quantiles = 0.5)+scale_fill_manual(values = clrs2[c(1,4)])+facet_wrap(~rep)
+```
+
+```{r}
+data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=INR_EPD))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank group")+ylab("Variance rank (SW)")+geom_smooth()+labs(col="INR (EPD)")+scale_color_manual(values = clrs2[c(1,4)])
+data  %>%  ungroup() %>% group_split(rep) %>% 
+  map(~roc_curve(.x, "INR_EPD") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("INR ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+#### CCAAT
+
+##### EPD CCAAT
+
+```{r}
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(median, sd_corr_group), fill=CCAAT_EPD))+ylab("Median")+facet_wrap(~rep)+scale_fill_manual(values = clrs2[c(1,4)])+xlab("Noise")+theme(axis.text.x = element_text(size=10), axis.ticks.x = element_blank())+scale_x_productlist(labels=c("High","","Low", ""))
+
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group), conds=product(median), fill=CCAAT_EPD))+xlab("Median")+facet_wrap(~rep)+scale_fill_manual(values = clrs2[c(1,4)])+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank())+scale_x_productlist(labels=paste0(levels(data$median),"  ") %>% strsplit(" ") %>% unlist())+ylab("")
+
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group,rep), fill=CCAAT_EPD))+ylab("Median")+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank())+scale_x_productlist(labels=paste0(levels(factor(data$rep)),"   ") %>% strsplit("  ") %>% unlist())+scale_fill_manual(values = clrs2[c(1,4)])+xlab("")+ylab("")
+
+
+data %>% ggplot(aes(median, sd_corr, fill=CCAAT_EPD))+geom_violin(draw_quantiles = 0.5)+scale_fill_manual(values = clrs2[c(1,4)])+facet_wrap(~rep)+ylab("SD residuals")
+```
+
+```{r}
+data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=CCAAT_EPD))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank group")+ylab("Variance rank (SW)")+geom_smooth()+labs(col="CCAAT (EPD)")+scale_color_manual(values = clrs2[c(1,4)])
+data  %>%  ungroup() %>% group_split(rep) %>% 
+  map(~roc_curve(.x, "CCAAT_EPD") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("CCAAT ROC curve")+scale_color_manual(values=clrs[3:4])
+
+data  %>%  ungroup() %>% group_split(rep, as.numeric(mean_sw)>70) %>% 
+    map(~roc_curve(.x, "CCAAT_EPD") %>% mutate(rep=unique(.x$rep), gr=ifelse(min(as.numeric(.x$mean_sw))<70, "low expression", "high_expression"),AUC=auc(.))) %>% list_rbind()%>% 
+    ggplot(aes(FPR,TPR, col=rep, linetype=gr))+geom_line()+geom_abline(linetype="dashed")+
+    geom_text(data=.%>% select(AUC, rep,gr) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8, 0.7,0.6), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("CCAAT ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+```{r}
+data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=CCAAT_EPD&CCAAT_FIMO))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank")+ylab("Variance rank")+geom_smooth()+labs(col="")+scale_color_manual(values = clrs2[c(1,4)])
+
+```
+
+##### FIMO CCAAT
+
+```{r}
+data %>% ggplot(aes(median, sd_corr, fill=CCAAT_EPD&CCAAT_FIMO))+geom_violin(draw_quantiles = 0.5)+scale_fill_manual(values = clrs2[c(1,4)])+facet_wrap(~rep)
+```
+
+##### NFYA ChIP data
+
+```{r}
+p1=data %>% 
+  ggplot(aes(median, sd_corr, fill=NFYA_chip_HepG2))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+ylab("Corrected SD")+scale_fill_manual(values=clrs2[c(1,4)])+theme(legend.position = "none")+facet_wrap(~rep)
+p2=data%>%filter(!is.na(sd_corr_group)) %>%
+    ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group,rep), fill=NFYA_chip_HepG2))+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank(), legend.text = element_text(size=5), legend.title = element_text(size=7))+scale_x_productlist(labels=paste0(levels(factor(data$rep)),"   ") %>% strsplit("  ") %>% unlist())+scale_fill_manual(values = clrs2[c(1,4)])+xlab("")+ylab("")
+
+p1+p2+patchwork::plot_layout(widths = c(0.7,0.3))
+```
+
+```{r}
+p1=data %>% 
+  ggplot(aes(median, sd_corr, fill=NFYA_chip_K562))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+ylab("Corrected SD")+scale_fill_manual(values=clrs2[c(1,4)])+theme(legend.position = "none")+facet_wrap(~rep)
+p2=data%>%filter(!is.na(sd_corr_group)) %>%
+    ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group,rep), fill=NFYA_chip_K562))+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank(), legend.text = element_text(size=5), legend.title = element_text(size=7))+scale_x_productlist(labels=paste0(levels(factor(data$rep)),"   ") %>% strsplit("  ") %>% unlist())+scale_fill_manual(values = clrs2[c(1,4)])+xlab("")+ylab("")
+p1+p2+patchwork::plot_layout(widths = c(0.7,0.3))
+```
+
+```{r}
+data %>% mutate(CCAAT=ifelse(CCAAT_EPD, ifelse(NFYA_chip_K562|NFYA_chip_HepG2, "EPD + ChIP", "EPD"), ifelse(NFYA_chip_K562|NFYA_chip_HepG2,"ChIP","-")))%>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=CCAAT))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank")+ylab("Variance rank")+geom_smooth()+labs(col="")+scale_color_manual(values = clrs2[c(1:4)])
+```
+
+```{r}
+p1=data %>%  mutate(CCAAT_TATA=CCAAT_EPD&TATA_EPD) %>% 
+  ggplot(aes(median, sd_corr, fill=CCAAT_TATA))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+ylab("Corrected SD")+scale_fill_manual(values=clrs2[c(1,4)])+theme(legend.position = "none")+facet_wrap(~rep)
+p2=data %>%  mutate(CCAAT_TATA=CCAAT_EPD&TATA_EPD)%>%filter(!is.na(sd_corr_group)) %>%
+    ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group,rep), fill=CCAAT_TATA))+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank(), legend.text = element_text(size=5), legend.title = element_text(size=7))+scale_x_productlist(labels=paste0(levels(factor(data$rep)),"   ") %>% strsplit("  ") %>% unlist())+scale_fill_manual(values = clrs2[c(1,4)])+xlab("")+ylab("")
+p1+p2+patchwork::plot_layout(widths = c(0.7,0.3))
+
+data %>% mutate(CCAAT_TATA=ifelse(CCAAT_EPD, ifelse(TATA_EPD, "CCAAT+TATA", "CCAAT"),ifelse(TATA_EPD, "TATA", "-")))%>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=CCAAT_TATA))+facet_wrap(~rep)+xlab("Mean rank")+ylab("Variance rank")+geom_smooth()+labs(col="")+scale_color_manual(values = clrs2[c(1:4)])+geom_point(size=0.05, alpha=0.2)
+```
+
+```{r}
+data  %>%  mutate(CCAAT_TATA=CCAAT_EPD&TATA_EPD) %>% ungroup() %>% group_split(rep) %>% 
+  map(~roc_curve(.x, "CCAAT_TATA") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("CCAAT + TATA ROC curve")+scale_color_manual(values=clrs[3:4])
+
+```
+
+#### GC box
+
+```{r}
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(median, sd_corr_group), fill=GCbox_EPD))+ylab("Median")+facet_wrap(~rep)+scale_fill_manual(values = clrs2[c(1,4)])+xlab("Noise")+theme(axis.text.x = element_text(size=10), axis.ticks.x = element_blank())+scale_x_productlist(labels=c("High","High","Low", "Low"))
+
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group), conds=product(median), fill=GCbox_EPD))+xlab("Median")+facet_wrap(~rep)+scale_fill_manual(values = clrs2[c(1,4)])+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank())+scale_x_productlist(labels=paste0(levels(data$median),"  ") %>% strsplit(" ") %>% unlist())+xlab("Median")+ylab("")
+
+data%>%filter(!is.na(sd_corr_group)) %>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group,rep), fill=GCbox_EPD))+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank())+scale_x_productlist(labels=paste0(levels(factor(data$rep)),"   ") %>% strsplit("  ") %>% unlist())+scale_fill_manual(values = clrs2[c(1,4)])+xlab("")+ylab("")
+
+
+data %>% ggplot(aes(median, sd_corr, fill=GCbox_EPD))+geom_violin(draw_quantiles = 0.5)+scale_fill_manual(values = clrs2[c(1,4)])+facet_wrap(~rep)+ylab("SD residuals")
+```
+
+```{r}
+data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=GCbox_EPD))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank")+ylab("Variance rank")+geom_smooth()+labs(col="")+scale_color_manual(values = clrs2[c(1,4)])
+
+data %>% group_split(rep) %>% 
+  map(~roc_curve(.x, "GCbox_EPD") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("GCbox ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+#### SP1 ChIP
+
+```{r}
+p1=data %>% 
+  ggplot(aes(median, sd_corr, fill=SP1_chip_K562))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+ylab("Corrected SD")+scale_fill_manual(values=clrs2[c(1,4)])+theme(legend.position = "none")+facet_wrap(~rep)
+p2=data%>%filter(!is.na(sd_corr_group)) %>%
+    ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group,rep), fill=SP1_chip_K562))+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank(), legend.text = element_text(size=5), legend.title = element_text(size=7))+scale_x_productlist(labels=paste0(levels(factor(data$rep)),"   ") %>% strsplit("  ") %>% unlist())+scale_fill_manual(values = clrs2[c(1,4)])+xlab("")+ylab("")
+
+p1+p2+patchwork::plot_layout(widths = c(0.7,0.3))
+```
+
+```{r}
+p1=data %>% 
+  ggplot(aes(median, sd_corr, fill=SP1_chip_HepG2))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+ylab("Corrected SD")+scale_fill_manual(values=clrs2[c(1,4)])+theme(legend.position = "none")+facet_wrap(~rep)
+p2=data%>%filter(!is.na(sd_corr_group)) %>%
+    ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group,rep), fill=SP1_chip_HepG2))+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank(), legend.text = element_text(size=5), legend.title = element_text(size=7))+scale_x_productlist(labels=paste0(levels(factor(data$rep)),"   ") %>% strsplit("  ") %>% unlist())+scale_fill_manual(values = clrs2[c(1,4)])+xlab("")+ylab("")
+
+p1+p2+patchwork::plot_layout(widths = c(0.7,0.3))
+```
+
+```{r}
+p1=data %>% 
+  ggplot(aes(median, sd_corr, fill=SP1_chip_HEK293T))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+ylab("Corrected SD")+scale_fill_manual(values=clrs2[c(1,4)])+theme(legend.position = "none")+facet_wrap(~rep)
+p2=data%>%filter(!is.na(sd_corr_group)) %>%
+    ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group,rep), fill=SP1_chip_HEK293T))+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank(), legend.text = element_text(size=5), legend.title = element_text(size=7))+scale_x_productlist(labels=paste0(levels(factor(data$rep)),"   ") %>% strsplit("  ") %>% unlist())+scale_fill_manual(values = clrs2[c(1,4)])+xlab("")+ylab("")
+
+p1+p2+patchwork::plot_layout(widths = c(0.7,0.3))
+```
+
+```{r}
+data %>% mutate(GC_SP1=ifelse(GCbox_EPD, ifelse(SP1_chip_K562|SP1_chip_HepG2, "EPD + ChIP", "EPD"), ifelse(SP1_chip_K562&SP1_chip_HepG2,"ChIP","-")))%>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=GC_SP1))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank")+ylab("Variance rank")+geom_smooth()+labs(col="")+scale_color_manual(values = clrs2[c(1:4)])
+```
+
+```{r}
+data %>% mutate(GC_SP1=GCbox_EPD&SP1_chip_K562&SP1_chip_HepG2)%>% group_split(rep) %>% 
+  map(~roc_curve(.x, "GC_SP1") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("GCbox +SP1 ROC curve")+scale_color_manual(values=clrs[3:4])
+
+data %>% mutate(SP1=SP1_chip_K562&SP1_chip_HepG2)%>% group_split(rep) %>% 
+  map(~roc_curve(.x, "SP1") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("SP1 ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+#### SP2
+
+```{r}
+p1=data %>% 
+  ggplot(aes(median, sd_corr, fill=SP2_chip_HepG2))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+ylab("Corrected SD")+scale_fill_manual(values=clrs2[c(1,4)])+theme(legend.position = "none")+facet_wrap(~rep)
+p2=data%>%filter(!is.na(sd_corr_group)) %>%
+    ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group,rep), fill=SP2_chip_HepG2))+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank(), legend.text = element_text(size=5), legend.title = element_text(size=7))+scale_x_productlist(labels=paste0(levels(factor(data$rep)),"   ") %>% strsplit("  ") %>% unlist())+scale_fill_manual(values = clrs2[c(1,4)])+xlab("")+ylab("")
+
+p1+p2+patchwork::plot_layout(widths = c(0.7,0.3))
+```
+
+```{r}
+p1=data %>% 
+  ggplot(aes(median, sd_corr, fill=SP2_chip_HEK293))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+ylab("Corrected SD")+scale_fill_manual(values=clrs2[c(1,4)])+theme(legend.position = "none")+facet_wrap(~rep)
+p2=data%>%filter(!is.na(sd_corr_group)) %>%
+    ggplot()+ggmosaic::geom_mosaic(aes(product(sd_corr_group,rep), fill=SP2_chip_HEK293))+theme(axis.text.x = element_text(size=8), axis.ticks.x = element_blank(), legend.text = element_text(size=5), legend.title = element_text(size=7))+scale_x_productlist(labels=paste0(levels(factor(data$rep)),"   ") %>% strsplit("  ") %>% unlist())+scale_fill_manual(values = clrs2[c(1,4)])+xlab("")+ylab("")
+
+p1+p2+patchwork::plot_layout(widths = c(0.7,0.3))
+```
+
+```{r}
+data %>% mutate(GC_SP2=ifelse(GCbox_EPD, ifelse(SP2_chip_HepG2&SP2_chip_HEK293, "EPD + ChIP", "EPD"), ifelse(SP2_chip_HepG2&SP2_chip_HEK293,"ChIP","-")))%>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=GC_SP2))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank")+ylab("Variance rank")+geom_smooth()+labs(col="")+scale_color_manual(values = clrs2[c(1:4)])
+```
+
+```{r}
+data %>% mutate(GC_SP2=GCbox_EPD&(SP2_chip_HEK293|SP2_chip_HepG2))%>% group_split(rep) %>% 
+  map(~roc_curve(.x, "GC_SP2") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("GCbox +SP2 ROC curve")+scale_color_manual(values=clrs[3:4])
+
+data %>% mutate(SP2=SP2_chip_HEK293|SP2_chip_HepG2)%>% group_split(rep) %>% 
+  map(~roc_curve(.x, "SP2") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("SP2 ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+```{r}
+data %>% mutate(SP1_SP2=ifelse(SP1_chip_K562|SP1_chip_HepG2, ifelse(SP2_chip_HepG2|SP2_chip_HEK293, "SP1 + SP2", "SP1"), ifelse(SP2_chip_HepG2|SP2_chip_HEK293,"SP2","-")))%>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=SP1_SP2))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank")+ylab("Variance rank")+geom_smooth()+labs(col="")+scale_color_manual(values = clrs2[c(1:4)])
+
+data %>% mutate(SP1_SP2=(SP1_chip_K562|SP1_chip_HepG2)&(SP2_chip_HEK293|SP2_chip_HepG2))%>% group_split(rep) %>% 
+  map(~roc_curve(.x, "SP1_SP2") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>%
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("SP1 + SP2 ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+#### TSS motif
+
+```{r}
+data %>% left_join(tss_df)%>%  pivot_longer(ends_with("TSS"), names_to = "motif", values_to = "presence") %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=presence))+geom_point(size=0.1, alpha=0.4)+geom_smooth()+facet_wrap(rep~motif, nrow=2)+scale_color_manual(values=clrs[3:4])
+```
+
+#### PhyloP score
+
+```{r}
+data %>% 
+  ggplot(aes(sd_corr_rank_rel,phylo100, col=median))+geom_smooth()+scale_color_viridis_d()+ylab("PhyloP score")+facet_wrap(~rep)+labs(col=eval("Median"))+geom_point(size=0.1,alpha=0.1)
+data %>% 
+  ggplot(aes(sd_corr_rank_rel,phylo100, col=median))+geom_smooth()+scale_color_viridis_d()+ylab("PhyloP score")+facet_wrap(~rep)+labs(col=eval("Median"))+xlab("SD residuals")
+```
+
+```{r}
+data%>%filter(!is.na(sd_corr_group)) %>% 
+  ggplot(aes(factor(median), phylo100, fill=sd_corr_group))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+labs(fill="Group")+facet_wrap(~rep)+ylab("PhyloP score")+scale_fill_manual(values = clrs2[c(2,3)])
+```
+
+```{r}
+phylo1pb_prom_df<-read_tsv("Tables/phylo100_1pb_lib.tsv")
+data %>% filter(!is.na(sd_corr_group)) %>% left_join(phylo1pb_prom_df, by=c("seq_id"="name")) %>% group_by(relpos,sd_corr_group,rep) %>% summarise(med_score=median(score, na.rm=T)) %>% 
+  ggplot(aes(relpos-15,med_score, col=sd_corr_group))+geom_line(linewidth=0.2)+xlab("Relative position to TSS")+ylab("Median PhyloP score")+facet_wrap(~rep)+geom_smooth(method="gam", linewidth=0.2)+scale_color_manual(values = clrs2[c(1,4)])+labs(color="")
+
+data %>% filter(!is.na(sd_corr_group)) %>% mutate(m=ifelse(as.numeric(mean_sw)>70, "High expression", "Low expression")) %>% left_join(phylo1pb_prom_df, by=c("seq_id"="name")) %>% group_by(relpos,sd_corr_group,rep, m) %>% summarise(med_score=median(score, na.rm=T)) %>% 
+  ggplot(aes(relpos-15,med_score, col=sd_corr_group))+geom_line(linewidth=0.2)+xlab("Relative position to TSS")+ylab("Median PhyloP score")+facet_wrap(~rep+m)+geom_smooth(method="gam", linewidth=0.2)+scale_color_manual(values = clrs2[c(1,4)])+labs(color="")
+```
+
+#### Gene Age
+
+```{r}
+data %>% filter(!is.na(`Age class`), prom_index_g=="Main") %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=`Age class`>24))+geom_point(size=0.1, alpha=0.7)+facet_wrap(~rep)+xlab("Mean rank group")+ylab("Variance rank (SW)")+geom_smooth()+labs(col="Genes older than\nOpisthokonta divergence")+scale_color_manual(values = clrs2[c(1,4)])
+```
+
+#### Human-Mouse functional turnover conservation (Young 2015)
+
+```{r}
+data %>% filter(!is.na(turnover), turnover!="ambiguous") %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=turnover))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank group")+ylab("Variance rank (SW)")+geom_smooth()+labs(col="Human-Mouse conservation")+scale_color_manual(values = clrs)
+```
+
+```{r}
+data  %>%  ungroup() %>% filter(!is.na(turnover)) %>% mutate(expression_turnover=turnover=="expression-turnover")%>% group_split(rep) %>% 
+  map(~roc_curve(.x, "expression_turnover") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("expression_turnover ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+#### Repeated Elements
+
+```{r}
+data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=TE_overlap>0))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank group")+ylab("Variance rank (SW)")+geom_smooth()+labs(col="Transposable Elements")+scale_color_manual(values = clrs2[c(1,4)])
+
+data  %>%  ungroup() %>% mutate(TE=TE_overlap>0)%>% group_split(rep) %>% 
+  map(~roc_curve(.x, "TE") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>%
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("TE ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+```{r}
+data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=LCR_overlap>0))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank group")+ylab("Variance rank (SW)")+geom_smooth()+labs(col="Low Complexity Repeats")+scale_color_manual(values = clrs2[c(1,4)])
+
+data  %>%  ungroup() %>% mutate(LCR=LCR_overlap>0)%>% group_split(rep) %>% 
+  map(~roc_curve(.x, "LCR") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>%
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("LCR ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+```{r}
+data %>% mutate(DNA_TE=TE_superclass=="DNA", LINE=TE_superclass=="LINE", SINE=TE_superclass=="SINE", LTR=TE_superclass=="LTR") %>% pivot_longer(c(DNA_TE, LINE,SINE,LTR), names_to = "TE_class", values_to = "TE") %>% mutate(TE=ifelse(is.na(TE), F,TE)) %>% 
+  ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=TE))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep+TE_class, ncol=4)+xlab("Mean rank group")+ylab("Variance rank (SW)")+geom_smooth()+labs(col="Transposable Elements")+scale_color_manual(values = clrs2[c(1,4)])
+
+```
+
+#### ChrX
+
+```{r}
+data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=seqnames=="chrX"))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank group")+ylab("Variance rank (SW)")+geom_smooth()+labs(col="chrX")+scale_color_manual(values = clrs2[c(1,4)])
+```
+
+```{r}
+data  %>%  ungroup() %>% mutate(chrX=seqnames=="chrX")%>% group_split(rep) %>% 
+  map(~roc_curve(.x, "chrX") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("chrX ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+### Dudnik et al dataset
+
+#### Selectivity
+
+```{r}
+data %>% filter(!is.na(selectivity_dudnik))%>% ggplot(aes(median, selectivity_dudnik, fill=sd_corr_group))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+labs(fill="")+scale_fill_manual(values = clrs2[c(1,4)]) + ylab("Selectivity")
+```
+
+```{r}
+data %>% 
+  ggplot(aes(var_rank_sw, selectivity_dudnik, col=median))+geom_smooth()+facet_wrap(~rep)+geom_point(size=0.3, alpha=0.1)+scale_colour_viridis_d()+xlab("SD rank (SW)")+ylab("Selectivity")
+```
+
+```{r}
+data %>%  mutate(selectivity=selectivity_dudnik>median(selectivity_puffin_lib$selectivity_dudnik))%>% group_split(rep) %>%
+  map(~roc_curve(.x, "selectivity") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("Selectivity ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+```{r}
+data %>% filter(!is.na(motif_selectivity_dudnik)) %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=motif_selectivity_dudnik>median(selectivity_puffin_lib$motif_selectivity_dudnik)))+geom_point(size=0.1, alpha=0.1)+geom_smooth()+labs(col="High selectivity")+facet_wrap(~rep)+scale_color_manual(values = clrs2[c(1,4)])+xlab("Mean rank (SW)")+ylab("Variance rank (SW)") 
+
+data %>% mutate(selectivity=motif_selectivity_dudnik>median(selectivity_puffin_lib$motif_selectivity_dudnik))%>% group_split(rep) %>%
+  map(~roc_curve(.x, "selectivity") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("Motif selectivity ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+#### Dispersion between CAGE samples
+
+```{r}
+data %>%filter(!is.na(dispersion_tissue_dudnik)) %>%  ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=dispersion_tissue_dudnik>median(selectivity_puffin_lib$dispersion_tissue_dudnik, na.rm=T)))+geom_point(size=0.1, alpha=0.1)+geom_smooth()+labs(col="Tissue-specific")+facet_wrap(~rep)+scale_color_manual(values = clrs2[c(1,4)])+xlab("Mean rank (SW)")+ylab("Variance rank (SW)") 
+
+data %>% mutate(selectivity=dispersion_tissue_dudnik>median(selectivity_puffin_lib$dispersion_tissue_dudnik, na.rm=T))%>% group_split(rep) %>%
+  map(~roc_curve(.x, "selectivity") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("Tissue specificty (Dudnik) ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+```{r}
+data %>%filter(!is.na(mean_expr_log10_dudnik)) %>%  ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=mean_expr_log10_dudnik>median(selectivity_puffin_lib$mean_expr_log10_dudnik, na.rm=T)))+geom_point(size=0.1, alpha=0.1)+geom_smooth()+labs(col="High Expression")+facet_wrap(~rep)+scale_color_manual(values = clrs2[c(1,4)])+xlab("Mean rank (SW)")+ylab("Variance rank (SW)") 
+
+data %>% inner_join(selectivity_puffin_lib, by="seq_id") %>% mutate(selectivity=mean_expr_log10_dudnik>median(selectivity_puffin_lib$mean_expr_log10_dudnik))%>% group_split(rep) %>%
+  map(~roc_curve(.x, "selectivity") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
+  ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("CAGE activity ROC curve")+scale_color_manual(values=clrs[3:4])
+```
+
+#### Motif Contribution
+
+```{r}
+
+motif_contribution_puffin_lib%>% pivot_longer(where(is.numeric), names_to="feature", values_to="motif_contribution") %>% inner_join(data, by="name")%>% ggplot(aes(var_rank_sw, motif_contribution, col=feature, text=feature))+geom_smooth()+facet_wrap(~rep)+xlab("Variance rank (SW)")->p
+plotly::ggplotly(p, tooltip = "text")
+motif_contribution_puffin_lib%>% pivot_longer(where(is.numeric), names_to="feature", values_to="motif_contribution") %>% inner_join(data, by="name")%>% ggplot(aes(sd_corr, motif_contribution, col=feature, text=feature))+geom_smooth()+facet_wrap(~rep)+xlab("SD residuals")->p
+plotly::ggplotly(p, tooltip = "text")
+
+```
+
+```{r}
+motif_contribution_puffin_lib %>% mutate(across(where(is.numeric), function(x)x>median(x))) %>% inner_join(data) %>%  ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=TATA_p))+geom_point(size=0.3, alpha=0.5)+geom_smooth()+labs(col="")+facet_wrap(~rep)+scale_color_manual(values = clrs2[c(1,4)])+xlab("Mean rank (SW)")+ylab("Variance rank (SW)") 
+
+```
+
+#### Re-processed
+
+```{r}
+dudnyk_pred_effects=read_tsv("Tables/Dudnyk_puffin_prediction_summ.tsv")
+data=left_join(data, dudnyk_pred_effects, by="seq_id")
+
+data %>% pivot_longer(ends_with("effect"), values_to = "effect", names_to="motif") %>% mutate(motif=ifelse(str_detect(motif,"Sum of"), str_remove(motif, "effect"),str_remove(motif, "motif effect")) %>% str_remove( "(\\+|\\-)") ) %>%  group_by(motif, rep, seq_id) %>% summarise(effect=sum(effect), var_rank_sw=unique(var_rank_sw)) %>% ungroup() %>% group_by(motif, rep) %>% mutate(effect=row_number(effect), mean=row_number(mean)) %>%  ggplot(aes(effect, var_rank_sw, col=motif, text=motif))+geom_smooth(se=F, method="loess")+facet_wrap(~rep)+xlab("Feature effect rank over pos=0")+ylab("Var rank (SW)")+theme(text=element_text(size=15))
+
+
+data %>% pivot_longer(ends_with("effect"), values_to = "effect", names_to="motif") %>% mutate(motif2=ifelse(str_detect(motif,"Sum of"), str_remove(motif, "effect"),str_remove(motif, "motif effect"))%>% str_remove( "(\\+|\\-)"), strand=str_extract(motif, "(\\-|\\+)") %>% replace_na("+")  ) %>%  group_by(motif, rep, seq_id) %>% summarise(effect=sum(effect), var_rank_sw=unique(var_rank_sw), motif2=unique(motif2), strand=unique(strand)) %>% ungroup() %>% group_by(motif, rep) %>% mutate(effect=row_number(effect)) %>%  ggplot(aes(effect, var_rank_sw, col=motif2, text=motif, linetype=strand))+geom_smooth(se=F, method="loess")+facet_wrap(~rep)+xlab("Feature effect rank over pos=0")+ylab("Var rank (SW)")+theme(text=element_text(size=15))->p
+plotly::ggplotly(p, tooltip="text")
+
+data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=`TATA+ motif effect`>median(`TATA+ motif effect`)))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank group")+ylab("Variance rank (SW)")+geom_smooth()+labs(col="TATA+ motif effect")+scale_color_manual(values = clrs2[c(1,4)])
+```
+
+### STRING connectivity
+
+```{r}
+data %>% filter(prom_index==1, !is.na(degree_full))  %>%  mutate(high_degree=degree_full>median(degree_full)) %>%  ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=high_degree))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank group")+ylab("Variance rank (SW)")+geom_smooth()+labs(col="high_degree")+scale_color_manual(values = clrs2[c(1,4)])+ggtitle("STRING full network connectivity")
+```
+
+```{r}
+data %>% filter(prom_index==1, !is.na(degree_full))  %>%  mutate(high_degree=degree_PPI>median(degree_PPI)) %>%  ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=high_degree))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank group")+ylab("Variance rank (SW)")+geom_smooth()+labs(col="high_degree")+scale_color_manual(values = clrs2[c(1,4)])+ggtitle("STRING PPI network connectivity")
+```
+
+### FANTOM5 data
+
+#### Tissue specificity
+
+```{r}
+data %>% filter(!is.na(class)) %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=class))+geom_point(size=0.1, alpha=0.4)+geom_smooth()+facet_wrap(~rep)
+
+r1=data %>% filter(!is.na(class), rep=="Rep 1") %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=class))+geom_point(size=0.1, alpha=0.4)+geom_smooth()+ggtitle("Rep 1")
+ggExtra::ggMarginal(r1,groupColour = T)->p1
+r2=data %>% filter(!is.na(class), rep=="Rep 3") %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=class))+geom_point(size=0.1, alpha=0.4)+geom_smooth()+ggtitle("Rep 3")
+ggExtra::ggMarginal(r2,groupColour = T)->p2
+(r1+theme(legend.position = "none", text=element_text(size=0)))+p1+(r1+theme(legend.position = "none", text=element_text(size=0)))+p2+plot_layout(widths = c(0,0.5), nrow=2, ncol=2)
+```
+
+```{r}
+ggplot(data,aes( var_rank_sw, col=class))+geom_density()+facet_wrap(~rep)
+ggplot(data,aes( var_rank_sw, gini_t))+geom_point(size=0.1)+geom_smooth()+facet_wrap(~rep)
+```
+
+### All together
+
+##### Tidy data
+
+```{r}
+tidy_data=data  %>% select(-tissue_enrichment)%>% fastDummies::dummy_cols("TE_superclass", ignore_na = T, omit_colname_prefix=T, remove_selected_columns = T) %>% fastDummies::dummy_cols("expresion_vbility_class_tissue", ignore_na = T, omit_colname_prefix=T, remove_selected_columns = T) %>% 
+  mutate(`High G+C content`=g_c>median(g_c),
+         across(c(DNA, SINE, LINE,LTR), ~replace_na(.x, 0)),
+         `No activity in mouse`=turnover%in%c("expression-turnover", "mouse-dimished"),
+         `Deleted in mouse`=turnover=="mouse-deleted",
+         `Human inserted`=turnover=="human-inserted",
+         `High TSS predictability`=`Sum of total effect`>median(`Sum of total effect`),
+         # `High motif effect`=prop_motif_effect>median(prop_motif_effect),
+         # `High trinucleotide effect`=prop_trinucl_effect>median(prop_trinucl_effect),
+         # `High initiator effect`=prop_init_effect>median(prop_init_effect),
+         `Transposable elements`=!is.na(data$TE_superclass),
+         `Low Complexity Repeats`=LCR_overlap>0,
+         `High conservation (16 to -50pb)`=close_phylo100>1,
+         `High conservation (-50 to -150)`=intermediate_phylo100>1,
+         `High conservation (-150 to -235)`=far_phylo100>1,
+         `Old genes`= `Age class`>24,
+         `High tissue specificity`=gini_tissue>median(gini_tissue, na.rm=T),
+         `Narrow promoters`=shape_tissue<median(shape_tissue, na.rm=T),
+         `High activity in HEK293`=hek_tpm>median(data$hek_tpm[data$hek_tpm>0],
+         #`Cis Regulatory Module`=N_TF_CRM>0
+         )
+  ) %>%
+  dplyr::rename(
+    `TATA-box (EPD)`=TATA_EPD,
+    `CCAAT (EPD)` = CCAAT_EPD,
+    `GC-box (EPD)` = GCbox_EPD,
+    `CpG islands`=CGI,
+    Retrotransposon=DNA,
+    TCT=TCT_TSS,
+    `CG at TSS`=CG_TSS,
+    `TA at TSS`=TA_TSS,
+    `TG at TSS`=TG_TSS,
+    `CA at TSS`=CA_TSS,
+    `Non canonical TSS`=other_TSS,
+    `Strong TSS`=INR_strong_TSS,
+    `Ubiquitous (FANTOM5)`=all_tissues_detected,
+    `Enriched expression in a few tissues (FANTOM5)` = group_enrichment,
+    `Enriched expression in a one tissues (FANTOM5)` = tissue_enrichment,
+    `Non detected activity (FANTOM5)`= non_detected, 
+  ) %>% 
+  select(mean_sw, var_rank_sw, rep,
+         LINE,
+         SINE,
+         LTR,
+         `High G+C content`,
+         `No activity in mouse`,
+         `Human inserted`,
+         `High TSS predictability`,
+         # `High motif effect`,
+         # `High trinucleotide effect`,
+         # `High initiator effect`,
+         `Transposable elements`,
+         `Low Complexity Repeats`,
+         `High conservation (16 to -50pb)`,
+         `High conservation (-50 to -150)`,
+         `High conservation (-150 to -235)`,
+         `Old genes`,
+         `TATA-box (EPD)`,
+         `CCAAT (EPD)`,
+         `GC-box (EPD)`,
+         `CpG islands`,
+         Retrotransposon,
+         TCT,
+         `CG at TSS`,
+         `TA at TSS`,
+         `TG at TSS`,
+         `CA at TSS`,
+         `Non canonical TSS`,
+         `Strong TSS`,
+         `Ubiquitous (FANTOM5)`,
+         `Enriched expression in a few tissues (FANTOM5)`,
+         `Enriched expression in a one tissues (FANTOM5)`,
+         `Non detected activity (FANTOM5)`,
+         `High tissue specificity`,
+         `Narrow promoters`,
+         `High activity in HEK293`,
+        # `Cis Regulatory Module`
+  )%>%
+  mutate(across(where(~ is.numeric(.x) && mean(.x)<1), as.logical), rep=as.factor(rep), across(where(is.logical), ~.x%>% factor(level=c("TRUE","FALSE")))) 
+
+#write_tsv(tibble(feature=names(tidy_data)), "Tables/tidy_names.tsv")
+tidy_names=read_tsv("Tables/tidy_names.tsv")
+names(tidy_data)[match(tidy_names$feature, names(tidy_data))]= tidy_names$new_name
+n_features=tidy_data %>% select(-mean_sw) %>% group_by(rep) %>% summarise(across(everything(), function(x)as.logical(x) %>% sum(na.rm=T) %>% magrittr::divide_by(n()))) %>% pivot_longer(-rep, names_to = "feature", values_to = "prop")
+
+vbles=tidy_data  %>% select( -mean_sw, -var_rank_sw, -rep) %>% names()
+vbles_split=map(c("seq","endo"), ~tidy_names$new_name[tidy_names$choose&(tidy_names$group==.x)]) 
+
+```
+
+##### AUC-ROC
+
+```{r}
+auc_df=map2( rep(group_split(tidy_data,rep), times=length(vbles)),rep(vbles,rep(2,times=length(vbles))), 
+             ~ tibble(AUC=auc(roc_curve(.x,.y)), rep=unique(.x$rep), feature=.y)) %>% list_rbind() #%>% left_join(n_features)
+#auc_df %>% ggplot(aes(feature, AUC))+geom_point(aes(shape=rep))+geom_line()+geom_hline(yintercept = 0.5, linetype="dashed")
+plot_auc=function(df){
+df  %>% group_by(feature) %>% mutate(AUCm=mean(AUC), noise=ifelse(AUCm>0.5, "High noise", "Low noise")) %>% arrange(AUCm)   %>% 
+  ggplot() + 
+  geom_col(data=~.x %>%select(-rep,-AUC) %>% unique(), 
+           aes(AUCm-0.5, fct_inorder(feature), fill=noise),orientation = "y")+
+  geom_point(aes(x=AUC-0.5, y=fct_inorder(feature), shape=rep))+geom_line(aes(x=AUC-0.5, y=fct_inorder(feature)))+
+  scale_x_continuous(labels = function(x) x + 0.5)+
+    labs(y="Features", x="Noise effects (AUC)", shape="")+scale_fill_manual(values=c("High noise"="#F18F01", "Low noise"="#99C24D"))
+}
+plot_auc(auc_df)
+
+auc_seq=map2( rep(group_split(tidy_data,rep), times=length(vbles_split[[1]])),rep(vbles_split[[1]],rep(2,times=length(vbles_split[[1]]))), ~ 
+                tibble(AUC=auc(roc_curve(.x,.y)), rep=unique(.x$rep), feature=.y)) %>% list_rbind()%>% left_join(n_features)
+plot_auc(auc_seq)+theme(text=element_text(size=20))+labs(fill="Effect")
+auc_endo=map2( rep(group_split(tidy_data,rep), times=length(vbles_split[[2]])),rep(vbles_split[[2]],rep(2,times=length(vbles_split[[2]]))), ~ 
+                 tibble(AUC=auc(roc_curve(.x,.y)), rep=unique(.x$rep), feature=.y)) %>% list_rbind()%>% left_join(n_features)
+plot_auc(auc_endo)+theme(text=element_text(size=20))+labs(fill="Effect")
+
+```
+
+```{r}
+library(pROC)
+auc_l=list()
+for(j in unique(tidy_data$rep)){
+  df=tidy_data %>% filter(rep==j)
+  for(i in vbles){
+    auc_l[[j]][[i]]=roc(df[[i]],df[["var_rank_sw"]], ci=T, boot.n=2000, direction=">")
+  }
+}
+auc_df=list()
+for (i in c(1,2)){
+auc_df[[i]]=map(auc_l[[i]], ~tibble(rep=unique(tidy_data$rep)[i], ci2.5=(.x$ci %>% as.numeric)[1], ci97.5=(.x$ci %>% as.numeric)[3], AUC=(.x$ci %>% as.numeric)[2])) %>% 
+  list_rbind() %>% mutate(feature=names(auc_l[[1]]))
+}
+auc_df=list_rbind(auc_df)
+
+
+plot_auc2=function(df){
+df %>%  arrange(AUC) %>% mutate(noise=ifelse(AUC>0.5, "High noise", "Low noise")) %>% filter((ci2.5>0.5&ci97.5>0.5)|(ci2.5<0.5&ci97.5<0.5)) %>% add_count(feature) %>% filter(n==2) %>% 
+  ggplot(aes(x=AUC-0.5, y=fct_inorder(feature), group=rep)) +
+  geom_col(orientation="y", position="dodge", aes( fill=noise, alpha=rep))+
+  scale_alpha_manual(values=c("Rep 1"=1, "Rep 3"=0.7))+
+  theme(text=element_text(size=20))+labs(fill="Effect", x="AUC (Noise effect)", y="Features", alpha="")+
+  scale_x_continuous(labels = function(x) x + 0.5)+
+  geom_errorbarh(aes(xmax=abs(ci2.5)-0.5 , xmin=abs(ci97.5)-0.5), position=position_dodge(1), height=0.05, col="#777777",  linewidth=1.5)+
+  scale_fill_manual(values=c("High noise"="#F18F01", "Low noise"="#99C24D"))+scale_alpha_manual(values = c("Rep 1"=1, "Rep 2"=0.5))
+}
+plot_auc2(auc_df)
+plot_auc2(auc_df %>% filter(feature%in%vbles_split[[1]]))
+plot_auc2(auc_df %>% filter(feature%in%vbles_split[[2]]))
+
+```
+
+##### MCC (Matthew's Correlation Coefficient)
+
+```{r}
+data %>% filter(rep=="Rep 3") %>% mutate(high_CG=g_c>0.5, main_promoter=prom_index==1, LCR=LCR_overlap>0, TE=TE_overlap>0, ChrX=seqnames=="chrX", expression_turnover=turnover=="expression-turnover")%>% roc_curve("CGI") %>%  
+  mutate(across(everything(), as.numeric), 
+         F1score=2*TRUE_TRUE/(2*TRUE_TRUE+TRUE_FALSE+FALSE_TRUE), 
+         MCC=(TRUE_TRUE*FALSE_FALSE-FALSE_TRUE*TRUE_FALSE)/sqrt((TRUE_TRUE+TRUE_FALSE)*(TRUE_TRUE+FALSE_TRUE)*(FALSE_FALSE+TRUE_FALSE)*(FALSE_FALSE+FALSE_TRUE)), 
+         normMCC=(MCC+1)/2) %>% 
+  ggplot(aes(threshold, normMCC))+geom_point()+geom_line()+labs(x="Variance rank threshold", y="normMCC")
+```
+
+### Changes in co-occurrance
+
+```{r}
+cors_var=map2(rep(unique(data$rep), 10), rep(seq(1,91, by=10), rep(2,10)), 
+          ~data %>% filter(rep==.x, var_rank_sw%in%seq(.y, .y+9)) %>% select(ends_with("EPD"), CGI, HK,prom_index_g) %>% mutate(across(where(is.character), function(x)as.numeric(as.factor(x)))) %>% 
+            cor() %>% as_tibble()%>% mutate(rep=.x, var_rank_sw=.y+4, feat=names(.))) %>% list_rbind()
+
+cors_var %>% filter(feat!="TATA_EPD") %>% ggplot(aes(var_rank_sw,TATA_EPD, col=feat))+geom_point(aes(shape=rep))+geom_smooth()+geom_hline(yintercept = 0)+ylab("phi coefficient")+ggtitle("Association with TATA")+xlab("Variance rank (SW)")
+```
+
+### JASPAR
+
+```{r}
+p1=df_split_filt%>%filter(type=="promoter")%>%mutate(TBP=TBP==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(median, var_lvl), fill=TBP))+xlab(disp)+ylab("Median")+facet_wrap(~rep)
+
+p2=df_split_filt%>%filter(type=="promoter")%>%mutate(TBP=TBP==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(var_lvl), conds=product(median), fill=TBP))+xlab("Median")+ylab(disp)+facet_wrap(~rep)
+p3=df_split_filt%>%filter(type=="promoter")%>%mutate(TBP=TBP==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(var_lvl,rep), fill=TBP))+xlab(disp)+ylab("Median")
+
+p1+(p2/p3)
+```
+
+```{r}
+p1=df_split_filt%>%filter(type=="promoter")%>%mutate(GATA3=GATA3==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(median, var_lvl), fill=GATA3))+xlab(disp)+ylab("Median")+facet_wrap(~rep)
+
+p2=df_split_filt%>%filter(type=="promoter")%>%mutate(GATA3=GATA3==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(var_lvl), conds=product(median), fill=GATA3))+xlab("Median")+ylab(disp)+facet_wrap(~rep)
+
+p3=df_split_filt%>%filter(type=="promoter")%>%mutate(GATA3=GATA3==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(var_lvl,rep), fill=GATA3))+xlab(disp)+ylab("Median")
+
+p1+(p2/p3)
+
+```
+
+```{r}
+p1=df_split_filt%>%filter(type=="promoter")%>%mutate(SP1=SP1==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(median, var_lvl), fill=SP1))+xlab(disp)+ylab("Median")+facet_wrap(~rep)
+
+p2=df_split_filt%>%filter(type=="promoter")%>%mutate(SP1=SP1==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(var_lvl), conds=product(median), fill=SP1))+xlab("Median")+ylab(disp)+facet_wrap(~rep)
+p3=df_split_filt%>%filter(type=="promoter")%>%mutate(SP1=SP1==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(var_lvl,rep), fill=SP1))+xlab(disp)+ylab("Median")
+
+p1+(p2/p3)
+```
+
+```{r}
+p1=df_split_filt%>%filter(type=="promoter")%>%mutate(RUNX1=RUNX1==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(median, var_lvl), fill=RUNX1))+xlab(disp)+ylab("Median")+facet_wrap(~rep)
+
+p2=df_split_filt%>%filter(type=="promoter")%>%mutate(RUNX1=RUNX1==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(var_lvl), conds=product(median), fill=RUNX1))+xlab("Median")+ylab(disp)+facet_wrap(~rep)
+
+
+p3=df_split_filt%>%filter(type=="promoter")%>%mutate(RUNX1=RUNX1==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(var_lvl,rep), fill=RUNX1))+xlab(disp)+ylab("Median")
+
+p1+(p2/p3)
+```
+
+```{r}
+p1=df_split_filt%>%filter(type=="promoter")%>%mutate(CREB1=CREB1==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(median, var_lvl), fill=CREB1))+xlab(disp)+ylab("Median")+facet_wrap(~rep)
+
+p2=df_split_filt%>%filter(type=="promoter")%>%mutate(CREB1=CREB1==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(var_lvl), conds=product(median), fill=CREB1))+xlab("Median")+ylab(disp)+facet_wrap(~rep)
+p3=df_split_filt%>%filter(type=="promoter")%>%mutate(CREB1=CREB1==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(var_lvl,rep), fill=CREB1))+xlab(disp)+ylab("Median")
+
+p1+(p2/p3)
+```
+
+```{r}
+p1=df_split_filt%>%filter(type=="promoter")%>%mutate(HNF1A=HNF1A==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(median, var_lvl), fill=HNF1A))+xlab(disp)+ylab("Median")+facet_wrap(~rep)
+
+p2=df_split_filt%>%filter(type=="promoter")%>%mutate(HNF1A=HNF1A==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(var_lvl), conds=product(median), fill=HNF1A))+xlab("Median")+ylab(disp)+facet_wrap(~rep)
+p3=df_split_filt%>%filter(type=="promoter")%>%mutate(HNF1A=HNF1A==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(var_lvl,rep), fill=HNF1A))+xlab(disp)+ylab("Median")
+
+p1+(p2/p3)
+```
+
+```{r}
+p1=df_split_filt%>%filter(type=="promoter")%>%mutate(FOXA2=FOXA2==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(median, var_lvl), fill=FOXA2))+xlab(disp)+ylab("Median")+facet_wrap(~rep)
+
+p2=df_split_filt%>%filter(type=="promoter")%>%mutate(FOXA2=FOXA2==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(var_lvl), conds=product(median), fill=FOXA2))+xlab("Median")+ylab(disp)+facet_wrap(~rep)
+p3=df_split_filt%>%filter(type=="promoter")%>%mutate(FOXA2=FOXA2==0)%>%
+  ggplot()+ggmosaic::geom_mosaic(aes(product(var_lvl,rep), fill=FOXA2))+xlab(disp)+ylab("Median")
+
+p1+(p2/p3)
+```
+
+```{r}
+p1=df_split_filt%>%
+  ggplot(aes(factor(median), n_var, fill=var_lvl))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+labs(fill="Variance")+facet_wrap(~rep)
+p2=df_split_filt%>%
+  ggplot(aes(factor(rep), n_var, fill=var_lvl))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+labs(fill="Variance")
+p1+p2
+```
+
+```{r}
+p1=df_split_filt%>%
+  ggplot(aes(factor(median), phylo100, fill=var_lvl))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+labs(fill="Variance")+facet_wrap(~rep)
+p2=df_split_filt%>%
+  ggplot(aes(factor(rep), phylo100, fill=var_lvl))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+labs(fill="Variance")
+p1+p2
+```
+
+```{r}
+p1=df_split_filt%>%
+  ggplot(aes(factor(median), phylo17, fill=var_lvl))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+labs(fill="Variance")+facet_wrap(~rep)
+p2=df_split_filt%>%
+  ggplot(aes(factor(rep), phylo17, fill=var_lvl))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+labs(fill="Variance")
+p1+p2
+```
+
+```{r}
+p1=df_split_filt%>%
+  ggplot(aes(factor(median), phastcons100, fill=var_lvl))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+labs(fill="Variance")+facet_wrap(~rep)
+p2=df_split_filt%>%
+  ggplot(aes(factor(rep), phastcons100, fill=var_lvl))+geom_violin(draw_quantiles = 0.5)+xlab("Median")+labs(fill="Variance")
+p1+p2
+```
+
+### 
