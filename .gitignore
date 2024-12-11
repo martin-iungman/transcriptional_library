@@ -8,4 +8,4 @@ External_data/*
 !External_data/download_data.sh
 Data_processing/FASTQ
 Data_processing/Count_table
-Citometry/*
+Experimental_data/*
