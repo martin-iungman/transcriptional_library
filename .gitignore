@@ -10,3 +10,4 @@ Data_processing/*
 !Data_processing/scripts
 !Data_processing/pcr_primers.fa
 Experimental_data/*
+Analysis/Tables/*
