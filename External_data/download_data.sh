@@ -21,3 +21,6 @@ wget https://www.repeatmasker.org/genomes/hg38/RepeatMasker-rm405-db20140131/hg3
 echo "SW_score perc_div perc_del perc_ins seqname start end genome_left cons_strand matching_repeat repeat_class repeat_start repeat_end repeat_left ID" > tmp.txt
 cat tmp.txt hg38.fa.out > hg38.fa.out
 rm tmp.txt
+
+#SuRE
+wget -O External_data/GSE78709_gencode.based.tss.SuRE.170828.txt https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE78709&format=file&file=GSE78709%5Fgencode%2Ebased%2Etss%2ESuRE%2E170828%2Etxt%2Egz
