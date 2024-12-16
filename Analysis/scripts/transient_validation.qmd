@@ -15,14 +15,14 @@ b=a%>%group_by(rep)%>%summarise(across(contains("counts"), ~sum(.x)%>%floor()))
 p1=a%>%ggplot(aes(sample,counts))+geom_col()+facet_wrap(~rep, nrow=2)+ggtitle("Raw counts", subtitle = paste("Total counts: \n rep_1", b$counts[1], '\n rep_3', b$counts[2]))+xlab("Gate")+ylab("Counts")+theme(title = element_text(size=10))
 p2=a%>%ggplot(aes(sample,counts_norm_libsize))+geom_col()+facet_wrap(~rep,nrow=2)+ggtitle("Counts normalized \n by Libsize")
 
-p3=a%>%ggplot(aes(sample,counts))+geom_col()+facet_wrap(~rep, nrow=2)+xlab("Gate")+ylab("Counts")+theme(title = element_text(size=8))+ggtitle("Counts normalized by \nLibsize and sampling effort")
+p3=a%>%ggplot(aes(sample,counts_norm))+geom_col()+facet_wrap(~rep, nrow=2)+xlab("Gate")+ylab("Counts")+theme(title = element_text(size=8))+ggtitle("Counts normalized by \nLibsize and sampling effort")
 
 p1+p2+p3+plot_annotation(title = seq)
 }
 ```
 
 ```{r}
-files=list.files(path="Citometry/Validation/Comp3/Unmixed", pattern=".csv", full.names = T)
+files=list.files(path="Experimental_data/Citometry/Transient_validation/Unmixed", pattern=".csv", full.names = T)
 prom_name=files %>% str_remove("^.+Unmixed/") %>% str_remove(".exported.+$")
 df=map2(files, prom_name, ~read_csv(.x, ) %>% mutate(name=.y)) %>% list_rbind()
 names(df)=str_replace_all(names(df), "-","_")
@@ -34,7 +34,7 @@ max_mcherry=max(df$`Comp_mCherry_A`)
 ```
 
 ```{r}
-gates_df=read_tsv("Tables/gates_counts.tsv")%>%filter(rep!="1+3")%>%mutate(rep=paste0("Rep ",rep))
+gates_df=read_tsv("Analysis/Tables/gates_counts.tsv")%>%filter(rep!="1+3")%>%mutate(rep=paste0("Rep ",rep))
 
 ```
 
@@ -99,4 +99,14 @@ ggplot() + geom_point(data=df_hist, aes(mean, mean_density, col=seq_id), size=2.
     geom_point(data=df_dens, aes(mean_hist, mean_EGFP, col=seq_id), size=2.5)+
     geom_line(data=df_dens, aes(mean_hist, mean_EGFP, col=seq_id), linewidth=1.5)+
     labs(x="Mean (Histogram)", y="Mean (Density)")+theme(text=element_text(size=20))+labs(col="Promoter")+scale_color_manual(values = clrs[1:6])
+```
+
+```{r}
+gates_df %>% mutate(seq_id=str_remove(seq_id, "^FP.{6}_"))%>%  filter(seq_id%in%c("KIAA0753_1", "TMEM87A_1")) %>% group_by(seq_id, rep) %>% mutate(counts_norm=counts_norm/sum(counts_norm)) %>% 
+  ggplot(aes(as.character(sample-1), counts_norm, fill=seq_id, alpha=rep))+geom_col(position="dodge")+scale_alpha_manual(values=c("Rep 1"=0.5,"Rep 2"=0.9))+theme_pubclean()+labs(x="Gate", y="Relative_counts", fill="Promoter", alpha=NULL)+scale_fill_manual(values=c(KIAA0753_1="#F18F01", TMEM87A_1="#99C24D"))
+```
+
+```{r}
+df %>% mutate(seq_id=str_remove(seq_id, "^FP.{6}_")) %>% filter(seq_id%in%c( "KIAA0753_1","TMEM87A_1")) %>% 
+  ggplot(aes(Comp_EGFP_A, fill=seq_id, group=name))+geom_density( alpha=0.3)+theme_pubclean()+scale_x_log10(limits=c(10,100000))+scale_fill_manual(values=c(KIAA0753_1="#F18F01", TMEM87A_1="#99C24D"))
 ```
