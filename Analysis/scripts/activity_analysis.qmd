@@ -145,6 +145,11 @@ data%>%
 data %>% group_by(mean_sw,rep) %>% summarise(TATA_EPD=sum(TATA_EPD)/n()) %>% ggplot(aes(mean_sw,TATA_EPD))+geom_point(col="#14AFB2")+geom_smooth(col="#216869")+theme(text=element_text(size=20))+facet_wrap(~rep)+ylim(0,1)+labs(x="Mean activity (binned by rank)",y="Proportion of promoters")+ggtitle("TATA-box")
 ```
 
+```{r}
+p=ggviolin(data, x="TATA_EPD", y="mean", fill="TATA_EPD", draw_quantiles = 0.5, facet.by = "rep", add="median_q1q3", palette=c("#14AFB2", "#216869"), alpha=0.7)
+p+stat_compare_means()+theme_pubclean()+labs(fill="TATA-box", x=NULL, y="Transcriptional mean activity")+theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+```
+
 #### JASPAR
 
 ```{r}
