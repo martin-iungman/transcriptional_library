@@ -10,7 +10,9 @@ toc: true
 library(tidyverse)
 library(ggmosaic)
 library(patchwork)
+library(ggpubr)
 theme_set(theme_bw())
+theme_set(theme_pubr())
 stats=read_tsv("Tables/noise/stats_rep_noise2023.tsv")
 
 stats=stats%>%filter(sum_norm_counts>1000)%>%mutate(median=factor(floor(median)), rep=paste0("Rep ",rep))
@@ -28,7 +30,7 @@ data=inner_join(stats, prom_df) %>% mutate(median=ifelse(median%in%c(5,6), "5+6"
 data=data %>% filter(!seq_id%in%inconsistent_median)
 ```
 
-### Endogenous activity
+### HEK293 Endogenous activity
 
 ```{r}
 data %>% mutate(as_factor(mean_sw)) %>% group_by(mean_sw, rep) %>% summarise(hek_tpm=mean(hek_tpm)) %>% ggplot(aes(mean_sw, hek_tpm))+geom_point(col="#CC2936")+geom_smooth(col="#08415c")+facet_wrap(~rep)+labs(x="Mean activity (binned by rank)", y="HEK293 endogenous activity (mean TPM)")+theme(text=element_text(size=20))+scale_y_log10()

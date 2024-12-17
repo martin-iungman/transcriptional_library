@@ -98,15 +98,17 @@ ggplot() + geom_point(data=df_hist, aes(mean, mean_density, col=seq_id), size=2.
     geom_line(data=df_hist, aes(mean, mean_density, col=seq_id), linewidth=1.5)+
     geom_point(data=df_dens, aes(mean_hist, mean_EGFP, col=seq_id), size=2.5)+
     geom_line(data=df_dens, aes(mean_hist, mean_EGFP, col=seq_id), linewidth=1.5)+
-    labs(x="Mean (Histogram)", y="Mean (Density)")+theme(text=element_text(size=20))+labs(col="Promoter")+scale_color_manual(values = clrs[1:6])
+    labs(x="Mean (Histogram)", y="Mean (Density)")+theme(text=element_text(size=20))+labs(col="Promoter")+scale_color_manual(values = c(KIAA0753_1="#AD343E", TMEM87A_1="#FFB400", ))
 ```
 
 ```{r}
-gates_df %>% mutate(seq_id=str_remove(seq_id, "^FP.{6}_"))%>%  filter(seq_id%in%c("KIAA0753_1", "TMEM87A_1")) %>% group_by(seq_id, rep) %>% mutate(counts_norm=counts_norm/sum(counts_norm)) %>% 
-  ggplot(aes(as.character(sample-1), counts_norm, fill=seq_id, alpha=rep))+geom_col(position="dodge")+scale_alpha_manual(values=c("Rep 1"=0.5,"Rep 2"=0.9))+theme_pubclean()+labs(x="Gate", y="Relative_counts", fill="Promoter", alpha=NULL)+scale_fill_manual(values=c(KIAA0753_1="#F18F01", TMEM87A_1="#99C24D"))
+p=gates_df %>% mutate(seq_id=str_remove(seq_id, "^FP.{6}_"))%>%  filter(seq_id%in%c("KIAA0753_1", "TMEM87A_1")) %>% group_by(seq_id, rep) %>% mutate(counts_norm=counts_norm/sum(counts_norm)) %>% 
+  ggplot(aes(as.character(sample-1), counts_norm, fill=seq_id, alpha=rep))+geom_col(position="dodge")+scale_alpha_manual(values=c("Rep 1"=0.5,"Rep 2"=0.9))+ggpubr::theme_pubr()+labs(x="Gate", y="Relative Counts", fill="Promoter", alpha=NULL)+scale_fill_manual(values=c(KIAA0753_1="#AD343E", TMEM87A_1="#FFB400"))
+ggsave("Plots/Fig1/transient_validation_hist.png", p)
 ```
 
 ```{r}
-df %>% mutate(seq_id=str_remove(seq_id, "^FP.{6}_")) %>% filter(seq_id%in%c( "KIAA0753_1","TMEM87A_1")) %>% 
-  ggplot(aes(Comp_EGFP_A, fill=seq_id, group=name))+geom_density( alpha=0.3)+theme_pubclean()+scale_x_log10(limits=c(10,100000))+scale_fill_manual(values=c(KIAA0753_1="#F18F01", TMEM87A_1="#99C24D"))
+p=df %>% mutate(seq_id=str_remove(seq_id, "^FP.{6}_")) %>% filter(seq_id%in%c( "KIAA0753_1","TMEM87A_1")) %>% 
+  ggplot(aes(Comp_EGFP_A, fill=seq_id, group=name))+geom_density( alpha=0.3)+scale_x_log10(limits=c(10,100000))+ggpubr::theme_pubr()+labs(x="Gate", y="Relative Counts", fill="Promoter", alpha=NULL)+scale_fill_manual(values=c(KIAA0753_1="#AD343E", TMEM87A_1="#FFB400"))
+ggsave("Plots/Fig1/transient_validation_density.png", p)
 ```

@@ -19,4 +19,4 @@ p3=df%>%filter(Rep=="rep_3")%>%
   geom_line(linewidth=2)+geom_point(size=5)+geom_point(shape = 1,size=5,colour = "black")+
   ggtitle("Rep 2")+scale_y_log10()+geom_point()+ylab("")+rcartocolor::scale_color_carto_d(palette="Emrld")+
   ggpubr::theme_pubr()+theme(legend.position = "none")
-cowplot::plot_grid(p2,p3) #el posta
+ggsave("Plots/Fig1/qpcr.png", plot=cowplot::plot_grid(p2,p3)) #el posta
