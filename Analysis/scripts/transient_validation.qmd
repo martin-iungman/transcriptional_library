@@ -34,7 +34,7 @@ max_mcherry=max(df$`Comp_mCherry_A`)
 ```
 
 ```{r}
-gates_df=read_tsv("Analysis/Tables/gates_counts.tsv")%>%filter(rep!="1+3")%>%mutate(rep=paste0("Rep ",rep))
+gates_df=read_tsv("Analysis/Tables/gates_counts.tsv")%>%filter(rep!="1+3")%>%mutate(rep=paste0("Rep ",rep) %>% str_replace("3", "2"))
 
 ```
 
@@ -98,7 +98,8 @@ ggplot() + geom_point(data=df_hist, aes(mean, mean_density, col=seq_id), size=2.
     geom_line(data=df_hist, aes(mean, mean_density, col=seq_id), linewidth=1.5)+
     geom_point(data=df_dens, aes(mean_hist, mean_EGFP, col=seq_id), size=2.5)+
     geom_line(data=df_dens, aes(mean_hist, mean_EGFP, col=seq_id), linewidth=1.5)+
-    labs(x="Mean (Histogram)", y="Mean (Density)")+theme(text=element_text(size=20))+labs(col="Promoter")+scale_color_manual(values = c(KIAA0753_1="#AD343E", TMEM87A_1="#FFB400", ))
+    labs(x="Mean (Histogram)", y="Mean (Density)")+theme(text=element_text(size=20))+labs(col="Promoter")+scale_color_manual(values = c(KIAA0753_1="#AD343E", TMEM87A_1="#FFB400", BTG1_1="#0D2C54", METAP2_1="#D6741F",PPP1R14B_3="#1B8C8E" , ZKSCAN2_1="#7FB800"))
+ggsave("Plots/Fig1/transient_validation_mena.png")
 ```
 
 ```{r}

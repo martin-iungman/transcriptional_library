@@ -11,11 +11,10 @@ library(tidyverse)
 library(ggmosaic)
 library(patchwork)
 library(ggpubr)
-theme_set(theme_bw())
 theme_set(theme_pubr())
-stats=read_tsv("Tables/noise/stats_rep_noise2023.tsv")
+stats=read_tsv("Analysis/Tables/stats.tsv")
 
-stats=stats%>%filter(sum_norm_counts>1000)%>%mutate(median=factor(floor(median)), rep=paste0("Rep ",rep))
+stats=stats%>%filter(sum_norm_counts>1000)%>%mutate(median=factor(floor(median)))
 clrs=ghibli::ghibli_palette(name="PonyoMedium")
 clrs1=wesanderson::wes_palette(name="GrandBudapest1")
 clrs2=wesanderson::wes_palette(name="GrandBudapest2")
@@ -24,16 +23,23 @@ clrs2=wesanderson::wes_palette(name="GrandBudapest2")
 ```{r}
 inconsistent_median=stats  %>% select(seq_id, median, rep) %>% pivot_wider(names_from = rep, values_from = median) %>%mutate(median_dif=abs(as.numeric(`Rep 1`)-as.numeric(`Rep 2`))) %>% filter(median_dif>1) %>% select(seq_id) %>% as_vector()
 
-prom_df=read_tsv("Tables/prom_df.tsv")
+prom_df=read_tsv("Analysis/Tables/prom_df.tsv")
 data=inner_join(stats, prom_df) %>% mutate(median=ifelse(median%in%c(5,6), "5+6", median), mode=ifelse(mode%in%c(5,6), "5+6", mode)) %>% filter(type=="promoter")
 
 data=data %>% filter(!seq_id%in%inconsistent_median)
 ```
 
+```{r}
+data %>% select(seq_id, mean, rep) %>% pivot_wider(values_from = "mean", names_from = "rep") %>% ggplot(aes(`Rep 1`, `Rep 2`))+geom_point(size=0.2, alpha=0.5, col="#0D2C54")+labs(x="Mean activity (Rep 1)", y="Mean activity (Rep 2)")
+ggsave("Plots/Fig1/mean_replicates.png")
+```
+
 ### HEK293 Endogenous activity
 
 ```{r}
-data %>% mutate(as_factor(mean_sw)) %>% group_by(mean_sw, rep) %>% summarise(hek_tpm=mean(hek_tpm)) %>% ggplot(aes(mean_sw, hek_tpm))+geom_point(col="#CC2936")+geom_smooth(col="#08415c")+facet_wrap(~rep)+labs(x="Mean activity (binned by rank)", y="HEK293 endogenous activity (mean TPM)")+theme(text=element_text(size=20))+scale_y_log10()
+data %>% mutate(as_factor(mean_sw)) %>% group_by(mean_sw, rep) %>% summarise(hek_tpm=mean(hek_tpm)) %>% ggplot(aes(mean_sw, hek_tpm))+geom_point(col="#AD343E")+geom_smooth(col="#08415c")+facet_wrap(~rep)+labs(x="Mean activity (binned by rank)", y="HEK293 endogenous activity (mean TPM)")+theme(text=element_text(size=20))+scale_y_log10()
+ggsave("Plots/Fig3/HEK_mean.png")
+
 map(data$rep %>% unique(), ~data %>% filter(rep==.x) %>% mutate(as_factor(mean_sw)) %>% group_by(mean_sw) %>% summarise(hek_tpm=mean(hek_tpm))   %>% select( mean_sw, hek_tpm)%>% cor( method="spearman", use="complete.obs"))
 data %>% mutate(mean_sw=factor(floor(mean_rank_sw/1200))) %>% ggplot(aes(mean_sw, hek_tpm+1))+geom_violin(draw_quantiles = 0.5, fill="#CC2936", alpha=0.5)+facet_wrap(~rep)+scale_y_log10()+geom_smooth(data=data ,aes(as.numeric(mean_rank_sw)/1200, hek_tpm+1), col="#CC2936")
 ```
@@ -114,6 +120,7 @@ data %>%
 data %>% group_by(mean_sw,rep) %>% summarise(CGI=sum(CGI)/n()) %>% ggplot(aes(mean_sw,CGI,fill="CpG island overlap"))+geom_col()+facet_wrap(~rep)+geom_smooth()+labs(x="Mean activity (binned by rank)", y="Proportion of promoters")+scale_fill_manual(values=c(presence="#3D518C"))
 
 data %>% group_by(mean_sw,rep) %>% summarise(CGI=sum(CGI)/n()) %>% ggplot(aes(mean_sw,CGI))+geom_point(col="#14AFB2")+geom_smooth(col="#216869")+theme(text=element_text(size=20))+facet_wrap(~rep)+ylim(0,1)+labs(x="Mean activity (binned by rank)",y="Proportion of promoters with CGI overlap")+ggtitle("CpG island overlap")
+ggsave("Plots/Fig2/CGI_scatter.png", create.dir = T)
 
 data %>% group_by(mean_sw,rep) %>% summarise(CGI=sum(CGI)/n()) %>% ggplot(aes(mean_sw,CGI, col=rep, group=rep))+geom_point()+geom_smooth()+theme(text=element_text(size=20))+ylim(0,1)+labs(x="Mean activity (binned by rank)",y="Proportion of promoters with CGI overlap")+ggtitle("CpG island overlap")
 ```
@@ -145,11 +152,13 @@ data%>%
 
 ```{r}
 data %>% group_by(mean_sw,rep) %>% summarise(TATA_EPD=sum(TATA_EPD)/n()) %>% ggplot(aes(mean_sw,TATA_EPD))+geom_point(col="#14AFB2")+geom_smooth(col="#216869")+theme(text=element_text(size=20))+facet_wrap(~rep)+ylim(0,1)+labs(x="Mean activity (binned by rank)",y="Proportion of promoters")+ggtitle("TATA-box")
+ggsave("Plots/Fig2/TATA_scatter.png", create.dir = T)
 ```
 
 ```{r}
 p=ggviolin(data, x="TATA_EPD", y="mean", fill="TATA_EPD", draw_quantiles = 0.5, facet.by = "rep", add="median_q1q3", palette=c("#14AFB2", "#216869"), alpha=0.7)
 p+stat_compare_means()+theme_pubclean()+labs(fill="TATA-box", x=NULL, y="Transcriptional mean activity")+theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+ggsave("Plots/Fig2/TATA_violin.png", create.dir = T)
 ```
 
 #### JASPAR

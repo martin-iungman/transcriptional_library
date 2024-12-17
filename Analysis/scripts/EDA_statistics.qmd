@@ -180,7 +180,8 @@ p1+p2
 perc_cells=tibble(sample=factor(1:6), perc=c(14.59,8.87,6.04,3.09, 1.41, 1.03))
 perc_cells$perc=perc_cells$perc/sum(perc_cells$perc)
 perc_cells$rel_factor=perc_cells$perc/min(perc_cells$perc)
-perc_cells%>%ggplot(aes(sample, perc))+geom_col(fill=clrs[2])+xlab("Gate")+ylab("Sample effort relativization factor")
+perc_cells%>%ggplot(aes(sample, perc))+geom_col(fill="#FFB400")+xlab("Gate")+ylab("Sample effort relativization factor")
+ggsave("Plots/Fig1/sample_effort.png")
 ```
 
 ```{r}
