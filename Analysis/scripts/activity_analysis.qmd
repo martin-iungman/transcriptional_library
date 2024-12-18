@@ -119,7 +119,7 @@ data %>%
 ```{r}
 data %>% group_by(mean_sw,rep) %>% summarise(CGI=sum(CGI)/n()) %>% ggplot(aes(mean_sw,CGI,fill="CpG island overlap"))+geom_col()+facet_wrap(~rep)+geom_smooth()+labs(x="Mean activity (binned by rank)", y="Proportion of promoters")+scale_fill_manual(values=c(presence="#3D518C"))
 
-data %>% group_by(mean_sw,rep) %>% summarise(CGI=sum(CGI)/n()) %>% ggplot(aes(mean_sw,CGI))+geom_point(col="#14AFB2")+geom_smooth(col="#216869")+theme(text=element_text(size=20))+facet_wrap(~rep)+ylim(0,1)+labs(x="Mean activity (binned by rank)",y="Proportion of promoters with CGI overlap")+ggtitle("CpG island overlap")
+data %>% group_by(mean_sw,rep) %>% summarise(CGI=sum(CGI)/n()) %>% ggplot(aes(mean_sw,CGI))+geom_point(col="#14AFB2")+geom_smooth(col="#216869")+theme(text=element_text(size=20))+facet_wrap(~rep)+ylim(0,1)+labs(x="Mean activity (binned by rank)",y="Proportion of promoters")+ggtitle("CpG island overlap")
 ggsave("Plots/Fig2/CGI_scatter.png", create.dir = T)
 
 data %>% group_by(mean_sw,rep) %>% summarise(CGI=sum(CGI)/n()) %>% ggplot(aes(mean_sw,CGI, col=rep, group=rep))+geom_point()+geom_smooth()+theme(text=element_text(size=20))+ylim(0,1)+labs(x="Mean activity (binned by rank)",y="Proportion of promoters with CGI overlap")+ggtitle("CpG island overlap")
@@ -637,6 +637,21 @@ data%>% mutate(N_TF_CRM=replace_na(N_TF_CRM,0))%>% ggplot(aes(as.factor(median),
   geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+scale_fill_viridis_d()+theme(legend.position = "none")+xlab("")
 
 data%>%group_by(mean_sw, rep) %>% summarise(N_TF=median(N_TF_CRM)) %>%  ggplot(aes(mean_sw, N_TF_CRM))+geom_point(size=0.1)+facet_wrap(~rep)+geom_smooth()
+```
+
+### Enhancers
+
+```{r}
+left_join(data, values(lib) %>% as_tibble() , by=c("seq_id"="name")) %>%
+  group_by(rep, mean_sw) %>% summarise(enh=mean(enh100kb))%>% ggplot(aes(mean_sw, enh))+
+  geom_point()+geom_smooth()+facet_wrap(~rep)+
+  labs(x="Mean activity (binned by rank)", y="Mean number of enhancers within 50kb from TSS")
+
+left_join(data, values(lib) %>% as_tibble() , by=c("seq_id"="name")) %>%
+  group_by(rep, mean_sw) %>% summarise(enh=sum(enh100kb>median(.$enh100kb))/n()) %>% 
+  ggplot(aes(mean_sw, enh))+geom_point()+geom_smooth()+facet_wrap(~rep)+
+  labs(x="Mean activity (binned by rank)", y="Proportion of promoters")+ggtitle("High number of enhancers within 50kb from TSS")
+             
 ```
 
 ### Comparing effect size

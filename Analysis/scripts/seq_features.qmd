@@ -271,3 +271,24 @@ LCR_df<-dplyr::filter(repeatmasker_df, repeat_family=="LCR") %>% select(seq_id,r
 TE_df<-dplyr::filter(repeatmasker_df, repeat_family=="TE") %>% select(seq_id,repeat_overlap,G_C_repeat, repeat_family, repeat_superclass) %>% group_by(seq_id)%>% summarise(TE_overlap=sum(repeat_overlap), G_C_TE=sum(G_C_repeat*repeat_overlap)/TE_overlap, TE_superclass=unique(repeat_superclass)[[1]]) 
 prom_df=prom_df %>% left_join(LCR_df) %>% left_join(TE_df)%>% mutate(across(c(LCR_overlap,TE_overlap,G_C_TE,G_C_LCR),function(x)replace_na(x, 0)), TE_superclass=TE_superclass %>% fct_lump_min(100))
 ```
+
+### Enhancers
+
+```{r}
+enhancers=import.bed("External_data/F5.hg38.enhancers.bed")
+width(enhancers) %>% as_tibble() %>% ggplot(aes(value))+geom_density()+scale_x_log10()
+lib10kb=promoters(lib, upstream=5000, downstream=5000)
+lib50kb=promoters(lib, upstream=25000, downstream=25000)
+lib100kb=promoters(lib, upstream=50000, downstream=50000)
+
+lib$enh10kb=countOverlaps(lib10kb, enhancers)
+lib$enh50kb=countOverlaps(lib50kb, enhancers)
+lib$enh100kb=countOverlaps(lib100kb, enhancers)
+values(lib) %>% as_tibble() %>% select(-score)%>% pivot_longer(starts_with("enh"), names_to = "range") %>% ggplot(aes(value, fill=range))+geom_bar(stat = "count", position = "dodge")
+
+prom_df=left_join(prom_df, values(lib) %>% as_tibble() , by="seq_id")
+prom_df %>% 
+  ggplot(aes(enh50kb %>% as_factor() %>% fct_lump_lowfreq(), gini_tissue))+
+  geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+labs(x="Enhancers in 50kb window flanking TSS", y="Tissue specificty")
+
+```
