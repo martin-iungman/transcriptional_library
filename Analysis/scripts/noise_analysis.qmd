@@ -234,7 +234,7 @@ data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=CGI))+geom_point(size=
 data %>% ungroup() %>% group_split(rep) %>% 
   map(~roc_curve(.x, "CGI") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
   ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
-  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("CGI ROC curve")+scale_color_manual(values=clrs[3:4])
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("CGI ROC curve")+scale_color_manual(values=c("#0D2C54", "#AD343E"))+theme_pubr(base_size = 20)+labs(linetype="", col="")
 
 ```
 
@@ -341,12 +341,14 @@ data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=TATA_EPD))+geom_point(
 data  %>%  ungroup() %>% group_split(rep) %>% 
   map(~roc_curve(.x, "TATA_EPD") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
   ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
-  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("TATA (EPD) ROC curve")+scale_color_manual(values=clrs[3:4])
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("TATA-box ROC curve")+scale_color_manual(values=c("#0D2C54", "#AD343E"))+theme_pubr(base_size = 20)+labs(linetype="", col="")
 
 data  %>%  ungroup() %>% group_split(rep, as.numeric(mean_sw)>70) %>% 
     map(~roc_curve(.x, "TATA_EPD") %>% mutate(rep=unique(.x$rep), gr=ifelse(min(as.numeric(.x$mean_sw))<70, "low expression", "high_expression"),AUC=auc(.))) %>% list_rbind()%>% 
     ggplot(aes(FPR,TPR, col=rep, linetype=gr))+geom_line()+geom_abline(linetype="dashed")+
-    geom_text(data=.%>% select(AUC, rep,gr) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8, 0.7,0.6), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("TATA ROC curve")+scale_color_manual(values=clrs[3:4])
+    geom_text(data=.%>% select(AUC, rep,gr) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8, 0.7,0.6), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("TATA-box ROC curve")+scale_color_manual(values=c("#0D2C54", "#AD343E"))+theme_pubr()+labs(linetype="", col="")
+
+
 ```
 
 #### INR
