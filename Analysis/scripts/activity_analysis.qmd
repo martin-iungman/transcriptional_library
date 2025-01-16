@@ -156,9 +156,9 @@ ggsave("Plots/Fig2/TATA_scatter.png", create.dir = T)
 ```
 
 ```{r}
-p=ggviolin(data, x="TATA_EPD", y="mean", fill="TATA_EPD", draw_quantiles = 0.5, facet.by = "rep", add="median_q1q3", palette=c("#14AFB2", "#216869"), alpha=0.7)
+p=ggviolin(data %>% filter(rep=="Rep 1"), x="TATA_EPD", y="mean", fill="TATA_EPD", draw_quantiles = 0.5, add="median_q1q3", palette=c("#14AFB2", "#216869"), alpha=0.7)
 p+stat_compare_means()+theme_pubclean()+labs(fill="TATA-box", x=NULL, y="Transcriptional mean activity")+theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
-ggsave("Plots/Fig2/TATA_violin.png", create.dir = T)
+ggsave("Plots/Fig2/TATA_violin_rep1.png", create.dir = T)
 ```
 
 #### JASPAR
@@ -473,7 +473,7 @@ motif_contribution_puffin_lib%>% pivot_longer(where(is.numeric), names_to="featu
 #### Re-processed
 
 ```{r}
-dudnyk_pred_effects=read_tsv("Tables/Dudnyk_puffin_prediction_summ.tsv")
+dudnyk_pred_effects=read_tsv("Analysis/Tables/Dudnyk_puffin_prediction_summ.tsv")
 data=left_join(data, dudnyk_pred_effects, by="seq_id")
 ```
 
@@ -525,6 +525,14 @@ plotly::ggplotly(p, tooltip="text")
 ```{r}
 data=data %>% mutate(prop_motif_effect=abs(`Sum of motif effect`/`Sum of total effect`),prop_init_effect=abs(`Sum of initiator effect`/`Sum of total effect`), prop_trinucl_effect=abs(`Sum of trinucleotide effect`/`Sum of total effect` ))
 data %>% pivot_longer(ends_with("_effect"), names_to = "elements", values_to = "Proportion") %>% ggplot(aes(median, Proportion, fill=elements))+geom_col(position = "fill")+facet_wrap(~rep)
+```
+
+```{r}
+data %>% group_by(rep) %>% filter(!is.na(selectivity_dudnik)) %>% mutate(mean_sw=row_number(mean) %>% cut_number(100) %>% as.numeric()) %>% group_by(rep, mean_sw)%>%  summarise(puffin=median(selectivity_dudnik, na.rm=T)) %>% ggplot(aes(mean_sw,puffin))+geom_point(col="#14AFB2")+geom_smooth(col="#216869")+facet_wrap(~rep)+labs(x="Mean activity (binned by rank)",y="Selectivity index")+ggtitle("PUFFIN selectivity")+theme_pubr()
+ggsave("Plots/Fig3/PUFFIN_selectivity_scatter.png")
+
+data %>% group_by(mean_sw,rep) %>% summarise(puffin=median(teoTSS_score)) %>% ggplot(aes(mean_sw,puffin))+geom_point(col="#14AFB2")+geom_smooth(col="#216869")+theme(text=element_text(size=20))+facet_wrap(~rep)+labs(x="Mean activity (binned by rank)",y="Median prediction score")+ggtitle("PUFFIN prediction over TSS position")
+ggsave("Plots/Fig3/PUFFIN_predscore_scatter.png", create.dir = T)
 ```
 
 ### Co-ocurrance
