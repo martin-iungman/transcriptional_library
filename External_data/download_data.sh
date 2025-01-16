@@ -29,4 +29,4 @@ wget -O External_data/GSE78709_gencode.based.tss.SuRE.170828.txt https://www.ncb
 wget -O External_data/xpresso_predictions.xlsx https://www.biorxiv.org/highwire/filestream/132781/field_highwire_adjunct_files/0/416685-1.xlsx
 
 # FANTOM5 enhancer
-https://fantom.gsc.riken.jp/5/datafiles/reprocessed/hg38_latest/extra/enhancer/F5.hg38.enhancers.bed.gz
+wget -O External_data/F5.hg38.enhancers.bed https://fantom.gsc.riken.jp/5/datafiles/reprocessed/hg38_latest/extra/enhancer/F5.hg38.enhancers.bed.gz
