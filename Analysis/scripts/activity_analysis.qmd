@@ -332,6 +332,32 @@ data %>% select(seq_id, g_c, CpG, GC_box, mean, CCAAT_EPD) %>% mutate(SP2_chip_H
   ggcorrplot::ggcorrplot()
 ```
 
+### Remap TFs
+
+```{r}
+remap=read_tsv("Analysis/Tables/allPeaks_light.hg38.50_lib_final.tsv")
+
+remap_scatter_plot=function(tf){
+  data %>% mutate(tf=seq_id%in%(remap %>% filter(feature==tf))$seq_id) %>% 
+    group_by(mean_sw,rep) %>% summarise(tf=sum(tf)/n()) %>% ggplot(aes(mean_sw,tf))+geom_point(col="#14AFB2")+
+    geom_smooth(col="#216869")+theme(text=element_text(size=20))+facet_wrap(~rep)+
+    ylim(0,1)+labs(x="Mean activity (binned by rank)",y="Proportion of promoters")+ggtitle(paste(tf,"binding")) 
+}
+
+remap_scatter_plot("NFYA")
+ggsave("Plots/Fig2/NFYA_scatter.png", create.dir = T)
+
+remap_scatter_plot("SP1")
+ggsave("Plots/Fig2/SP1_scatter.png", create.dir = T)
+
+remap_scatter_plot("SP2")
+ggsave("Plots/Fig2/SP2_scatter.png", create.dir = T)
+
+remap_scatter_plot("SP3")
+ggsave("Plots/Fig2/SP3_scatter.png", create.dir = T)
+
+```
+
 ### TSS motif
 
 #### PWM
@@ -709,7 +735,10 @@ tidy_data=data  %>% select(-tissue_enrichment)%>% fastDummies::dummy_cols("TE_su
                           `High conservation (-150 to -235)`=far_phylo100>1,
                           `Old genes`= `Age class`>24,
                           `High tissue specificity`=gini_tissue>median(gini_tissue, na.rm=T),
-                          `Narrow promoters`=shape_tissue<median(shape_tissue, na.rm=T),
+                          shape_tissue=cut_number(shape_tissue, n=3) %>% as.numeric(),
+                          
+                          `Narrow promoters`=shape_tissue==1,
+                          `Broad promoters`=shape_tissue==3,
                           #`High activity in HEK293`=hek_tpm>median(data$hek_tpm[data$hek_tpm>0])
                           `High activity in HEK293`=hek_tpm>mean(data$hek_tpm),
                           `Cis Regulatory Module`=N_TF_CRM>0
