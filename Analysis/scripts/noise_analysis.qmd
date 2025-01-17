@@ -8,8 +8,9 @@ output-file: "split_variance_median_norm.html"
 library(tidyverse)
 library(ggmosaic)
 library(patchwork)
+library(ggpubr)
 theme_set(theme_bw())
-stats=read_tsv("Tables/noise/stats_rep_noise2023.tsv")
+stats=read_tsv("Analysis/Tables/stats.tsv")
 stats=stats%>%filter(sum_norm_counts>1000)%>%mutate(median=factor(floor(median))) %>% mutate(rep=paste("Rep",rep))
 clrs=ghibli::ghibli_palette(name="PonyoMedium")
 clrs2=wesanderson::wes_palette(name="GrandBudapest2")
@@ -341,12 +342,15 @@ data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=TATA_EPD))+geom_point(
 data  %>%  ungroup() %>% group_split(rep) %>% 
   map(~roc_curve(.x, "TATA_EPD") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
   ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
-  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("TATA-box ROC curve")+scale_color_manual(values=c("#0D2C54", "#AD343E"))+theme_pubr(base_size = 20)+labs(linetype="", col="")
+  geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("TATA-box")+scale_color_manual(values=c("#0D2C54", "#AD343E"))+theme_pubr(base_size = 20)+labs(linetype="", col="")
+ggsave("Plots/Fig4/ROC_TATA.png", create.dir = T)
 
-data  %>%  ungroup() %>% group_split(rep, as.numeric(mean_sw)>70) %>% 
-    map(~roc_curve(.x, "TATA_EPD") %>% mutate(rep=unique(.x$rep), gr=ifelse(min(as.numeric(.x$mean_sw))<70, "low expression", "high_expression"),AUC=auc(.))) %>% list_rbind()%>% 
+
+data  %>%  ungroup() %>% group_split(rep, as.numeric(mean_sw)>(0.7*max(mean_sw))) %>% 
+    map(~roc_curve(.x, "TATA_EPD") %>% mutate(rep=unique(.x$rep), gr=ifelse(min(as.numeric(.x$mean_sw))<70, "Low expression", "High expression"),AUC=auc(.))) %>% list_rbind()%>% 
     ggplot(aes(FPR,TPR, col=rep, linetype=gr))+geom_line()+geom_abline(linetype="dashed")+
-    geom_text(data=.%>% select(AUC, rep,gr) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8, 0.7,0.6), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("TATA-box ROC curve")+scale_color_manual(values=c("#0D2C54", "#AD343E"))+theme_pubr()+labs(linetype="", col="")
+    geom_text(data=.%>% select(AUC, rep,gr) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8, 0.7,0.6), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("TATA-box")+scale_color_manual(values=c("#0D2C54", "#AD343E"))+theme_pubr()+labs(linetype="", col="")
+ggsave("Plots/Fig4/ROC_TATA_expr.png", create.dir = T)
 
 
 ```
