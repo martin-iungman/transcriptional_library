@@ -11,8 +11,8 @@ library(coin)
 library(pROC)
 hs <- org.Hs.eg.db
 
-prom_df=read_tsv("Tables/prom_df.tsv")
-data=read_tsv("Tables/full_data.tsv") #%>% mutate(median=ifelse(median%in%c(5,6), "5+6", median))
+prom_df=read_tsv("Analysis/Tables/prom_df.tsv")
+data=read_tsv("Analysis/Tables/full_data.tsv") #%>% mutate(median=ifelse(median%in%c(5,6), "5+6", median))
 ```
 
 ```{r}
@@ -40,7 +40,7 @@ NESplot <- function(x, n = 20, cutoff = 0.05, title = NULL, ontology=c("CC","MF"
 ## Data processing
 
 ```{r}
-nr=read_tsv("Tables/chipatlas_remap/library_remap_NR.bed", col_names = c("seqnames", "start", "end", "seq_id", "score", "strand", "seqnames_peak", "start_peak",  "end_peak", "sample", "N_tissue", "strand_peak", "thickstart_peak", "thickend_peak", "rgb"))
+nr=read_tsv("Analysis/Tables/library_remap_NR.bed", col_names = c("seqnames", "start", "end", "seq_id", "score", "strand", "seqnames_peak", "start_peak",  "end_peak", "sample", "N_tissue", "strand_peak", "thickstart_peak", "thickend_peak", "rgb"))
 nr=nr %>% separate(sample, into=c("TF", "sample"), sep=":")
 nr_N=nr %>% group_split(TF) %>% map(~tibble(TF=unique(.x$TF),N=nrow(.x))) %>% list_rbind()
 nr_N %>% ggplot(aes(N))+geom_density()+scale_x_log10()
@@ -48,15 +48,15 @@ nr_N %>% ggplot(aes(N))+geom_density()+scale_x_log10()
 
 ```{r}
 TF_data=data
-for(TFs in unique(nr$TF)){
-  subdata=nr %>% filter(TF==TFs)
+for(TFs in unique(nr$feature)){
+  subdata=nr %>% filter(feature==TFs)
   if(any(subdata$seq_id%in%TF_data$seq_id)){
     TF_data[[paste0("TF_",TFs)]]=TF_data$seq_id%in%(subdata$seq_id)
   }}
 rm(nr)
 gc()
 
-write_tsv(TF_data, "Tables/chipatlas_remap/data_TF_remap.tsv")
+write_tsv(TF_data, "Analysis/Tables/data_TF_remap.tsv")
 ```
 
 ```{r}
@@ -92,6 +92,7 @@ wilcox_df2 %>% filter(feature%in% vbles) %>% arrange(estimate) %>% mutate(act=if
   geom_errorbarh(data=~.x%>% filter(rep==repname[1]), aes(xmax=-abs(P2.5) , xmin=-abs(P97.5)), height=0.01, col="#777777",  linewidth=1.5)+
   geom_errorbarh(data=~.x%>% filter(rep==repname[2]), aes(xmax=abs(P2.5) , xmin=abs(P97.5)), height=0.01, col="#777777", linewidth=1.5)+
   theme(text=element_text(size=20))+scale_fill_manual(values=c("Low activity"="#14AFB2", "High activity"="#E0777D"))
+ggsave("Plots/Fig2/remap_act.tsv")
 
 ```
 
@@ -143,7 +144,7 @@ GSE_KGG_rep2<-gseKEGG(ordered_genes)
 ## Noise effect
 
 ```{r}
-vbles=tidy_TF_data  %>% select( -mean_sw, -var_rank_sw, -rep) %>% names()
+vbles=tidy_TF_data  %>% select( -mean_sw, -var_rank_sw, -rep, -mean) %>% names()
 
 auc_l=list()
 for(j in unique(tidy_TF_data$rep)){
@@ -160,16 +161,18 @@ for (i in c(1,2)){
 auc_df=list_rbind(auc_df)
 
 plot_auc2=function(df){
-  df %>%  arrange(AUC) %>% mutate(noise=ifelse(AUC>0.5, "High noise", "Low noise")) %>% filter((ci2.5>0.5&ci97.5>0.5)|(ci2.5<0.5&ci97.5<0.5)) %>% add_count(feature) %>% filter(n==2) %>% 
+  df %>%  arrange(AUC) %>% mutate(noise=ifelse(AUC>0.5, "High noise", "Low noise")) %>% filter((ci2.5>0.5&ci97.5>0.5)|(ci2.5<0.5&ci97.5<0.5)) %>% add_count(feature) %>% filter(n==2) %>% group_by(feature) %>% mutate(same_sense=length(unique(noise))) %>% filter(same_sense==1) %>% 
     ggplot(aes(x=AUC-0.5, y=fct_inorder(feature), group=rep)) +
     geom_col(orientation="y", position="dodge", aes( fill=noise, alpha=rep))+
-    scale_alpha_manual(values=c("Rep 1"=1, "Rep 3"=0.7))+
-    theme(text=element_text(size=20), axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.grid = element_blank())+labs(fill="Effect", x="AUC (Noise effect)", y="Features", alpha="")+
+    scale_alpha_manual(values=c("Rep 1"=1, "Rep 2"=0.7))+
+    ggpubr::theme_pubr()+
+    theme(text=element_text(size=20), axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.grid = element_blank())+labs(fill="Effect", x="AUC (Noise effect)", y="Transcription factor", alpha="")+
     scale_x_continuous(labels = function(x) x + 0.5)+
     #geom_errorbarh(aes(xmax=abs(ci2.5)-0.5 , xmin=abs(ci97.5)-0.5), position=position_dodge(1), height=0.05, col="#777777",  linewidth=0.5)+
     scale_fill_manual(values=c("High noise"="#F18F01", "Low noise"="#99C24D"))
 }
 plot_auc2(auc_df)
+ggsave("Plots/Fig4/Remap_noise.png")
 ```
 
 ### Gene set enrichment
