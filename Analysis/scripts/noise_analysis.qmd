@@ -795,9 +795,11 @@ tidy_data=data  %>% select(-tissue_enrichment)%>% fastDummies::dummy_cols("TE_su
          `High conservation (-150 to -235)`=far_phylo100>1,
          `Old genes`= `Age class`>24,
          `High tissue specificity`=gini_tissue>median(gini_tissue, na.rm=T),
-         `Narrow promoters`=shape_tissue<median(shape_tissue, na.rm=T),
+         shape_tissue=cut_number(shape_tissue, n=3) %>% as.numeric(),
+         `Narrow promoters`=shape_tissue==1,
+         `Broad promoters`=shape_tissue==3,         
          `High activity in HEK293`=hek_tpm>median(data$hek_tpm[data$hek_tpm>0],
-         #`Cis Regulatory Module`=N_TF_CRM>0
+         `Cis Regulatory Module`=N_TF_CRM>0
          )
   ) %>%
   dplyr::rename(
