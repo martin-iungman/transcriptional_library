@@ -11,7 +11,7 @@ library(patchwork)
 library(ggpubr)
 theme_set(theme_bw())
 stats=read_tsv("Analysis/Tables/stats.tsv")
-stats=stats%>%filter(sum_norm_counts>1000)%>%mutate(median=factor(floor(median))) %>% mutate(rep=paste("Rep",rep))
+stats=stats%>%filter(sum_norm_counts>1000)%>%mutate(median=factor(floor(median))) 
 clrs=ghibli::ghibli_palette(name="PonyoMedium")
 clrs2=wesanderson::wes_palette(name="GrandBudapest2")
 rename=dplyr::rename
@@ -78,7 +78,10 @@ max_var=function(k){
 }
 
 stats$max_var=sapply(stats$positive_gates,max_var)
-ggplot(stats, aes(mean, var))+geom_point(size=0.5, col=clrs[3])+labs(col="positive_gates")+facet_wrap(~rep)+gghighlight::gghighlight(var>max_var*1.2)+ylab("Variance")
+ggplot(stats, aes(mean, var))+geom_point(size=0.5, col=clrs[3])+labs(col="positive_gates")+facet_wrap(~rep)+gghighlight::gghighlight(var>max_var*1.2)+ylab("Variance")+xlab("Mean")+ggpubr::theme_pubr()
+
+stats %>% mutate(bimodal=var>max_var*1.2) %>% arrange(bimodal)%>% ggplot(aes(mean, var, col=bimodal))+geom_point(size=0.5)+facet_wrap(~rep)+ylab("Variance")+xlab("Mean")+ggpubr::theme_pubr()+scale_color_manual(values=c( "FALSE"="#0D2C54", "TRUE"="#1B8C8E"))+labs(col="Bimodal")+ guides(colour = guide_legend(override.aes = list(size=3)))
+ggsave("Plots/Fig4/mean_var_bimodal.pdf")
 ```
 
 For the next analysis the sequences with variance higher than the 120% of the homogeneity variance (for the given k positive gates), are ommited.
@@ -228,7 +231,8 @@ data %>% ggplot(aes(width_cgi_overlap, sd_corr_rank_rel))+geom_hex()+geom_smooth
 ```
 
 ```{r}
-data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=CGI))+geom_point(size=0.05, alpha=0.2)+facet_wrap(~rep)+xlab("Mean rank group")+ylab("Variance rank (SW)")+geom_smooth()+labs(col="CpG island")+scale_color_manual(values = clrs2[c(1,4)])
+data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=CGI))+geom_point(size=0.2, alpha=0.5)+facet_wrap(~rep)+xlab("Mean rank group")+ylab("Variance rank (SW)")+geom_smooth()+labs(col="CpG island")+scale_color_manual(values = col)+theme_pubr(base_size = 20)
+ggsave("Plots/Fig4/noise_scatter_CGI.pdf")
 ```
 
 ```{r}
@@ -236,7 +240,7 @@ data %>% ungroup() %>% group_split(rep) %>%
   map(~roc_curve(.x, "CGI") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
   ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
   geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("CGI ROC curve")+scale_color_manual(values=c("#0D2C54", "#AD343E"))+theme_pubr(base_size = 20)+labs(linetype="", col="")
-
+ggsave("Plots/Fig4/ROC_CGI.pdf")
 ```
 
 #### Promoter index
@@ -339,18 +343,23 @@ data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=TATA_EPD))+geom_point(
 ```
 
 ```{r}
+data %>% ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=TATA_EPD))+geom_point(size=0.2, alpha=0.5)+facet_wrap(~rep)+xlab("Mean rank group")+ylab("Variance rank (SW)")+geom_smooth()+labs(col="TATA-box")+scale_color_manual(values = col)+theme_pubr(base_size = 20)
+ggsave("Plots/Fig4/noise_scatter_TATA.pdf")
+```
+
+```{r}
 data  %>%  ungroup() %>% group_split(rep) %>% 
   map(~roc_curve(.x, "TATA_EPD") %>% mutate(rep=unique(.x$rep), AUC=auc(.))) %>% list_rbind()%>% 
   ggplot(aes(FPR,TPR, col=rep))+geom_line()+geom_abline(linetype="dashed")+
   geom_text(data=.%>% select(AUC, rep) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("TATA-box")+scale_color_manual(values=c("#0D2C54", "#AD343E"))+theme_pubr(base_size = 20)+labs(linetype="", col="")
-ggsave("Plots/Fig4/ROC_TATA.png", create.dir = T)
+ggsave("Plots/Fig4/ROC_TATA.pdf", create.dir = T)
 
 
-data  %>%  ungroup() %>% group_split(rep, as.numeric(mean_sw)>(0.7*max(mean_sw))) %>% 
+data  %>%  ungroup() %>% group_split(rep, as.numeric(mean_sw)>(0.7*max(as.numeric(mean_sw)))) %>% 
     map(~roc_curve(.x, "TATA_EPD") %>% mutate(rep=unique(.x$rep), gr=ifelse(min(as.numeric(.x$mean_sw))<70, "Low expression", "High expression"),AUC=auc(.))) %>% list_rbind()%>% 
     ggplot(aes(FPR,TPR, col=rep, linetype=gr))+geom_line()+geom_abline(linetype="dashed")+
     geom_text(data=.%>% select(AUC, rep,gr) %>% mutate(AUC=paste("AUC:", round(AUC,3)))%>% unique() %>% bind_cols(tibble(TPR=c(0.9,0.8, 0.7,0.6), FPR=0.02)), aes(label=AUC), hjust="left")+ggtitle("TATA-box")+scale_color_manual(values=c("#0D2C54", "#AD343E"))+theme_pubr()+labs(linetype="", col="")
-ggsave("Plots/Fig4/ROC_TATA_expr.png", create.dir = T)
+ggsave("Plots/Fig4/ROC_TATA_expr.pdf", create.dir = T)
 
 
 ```
