@@ -2,8 +2,8 @@
 title: "FANTOM5 Tissues - Library"
 author: "Martin Iungman"
 params:
-  write: false
-  bed_summ: false
+  write: true
+  bed_summ: true
 ---
 
 ```{r}
@@ -25,9 +25,9 @@ load_cage=function(df){
   return(ls)
 }
 load_summ_cage=function(){
-filenames=paste0("Tables/Library_filt_CAGE/",unique(cell_ont$`Facet ontology term`),".bed")
-filenames=filenames[filenames%in%list.files("Tables/Library_filt_CAGE", full.names = T)]
-sample_name=str_remove(filenames, "Tables/Library_filt_CAGE/")%>%str_remove(".bed")
+filenames=paste0("External_data/FANTOM5/Library_filt_CAGE/",unique(cell_ont$`Facet ontology term`),".bed")
+filenames=filenames[filenames%in%list.files("External_data/FANTOM5/Library_filt_CAGE", full.names = T)]
+sample_name=str_remove(filenames, "External_data/FANTOM5/Library_filt_CAGE/")%>%str_remove(".bed")
   beds=map(filenames, import.bed)
   ls=map2(beds, sample_name, ~.x%>%plyranges::join_overlap_left_directed(lib_gr,.)%>% #overlap with the library
            values()%>%as_tibble()%>%group_by(name.x)%>%
@@ -87,40 +87,39 @@ relpos_cage=function(bed){
 }
 ```
 
-
 ## Tissue variability
 
 We assign for each tissue sample in FANTOM5 a reference tissue in order to group them and reduce the effect of having many samples too similar between each other. The classification is based on @https://www.nature.com/articles/nature12787. For each sequence, all the counts in the range of positions for all the respective samples are summed. Then they are normalized by the whole library size.
 
 ```{r}
 set="tissue"
-cell_ont=readxl::read_xls(paste0("External_data/FANTOM5/",set,"_ontology_FANTOM5.xlsx"))
+cell_ont=readxl::read_xls(paste0("External_data/FANTOM5/",set,"_ontology_FANTOM5.xlsx")) %>% dplyr::rename("sample_id"=`Sample ID`)
 inputFiles = list.files(paste0("External_data/FANTOM5/hg38_",set), full.names = T,pattern=".nobarcode.ctss.bed.gz$")
 sample_id=inputFiles%>%str_extract("CNhs.{5}")
 cell_ont=tibble(filename=inputFiles, sample_id=sample_id)%>%inner_join(cell_ont, by=c("sample_id"))
 cell_ont_list=cell_ont%>%group_split(`Facet ontology term`)
 names(cell_ont_list)<-group_keys(cell_ont%>%group_by(`Facet ontology term`))%>%as_vector()
 
-libsize=read.delim("External_data/FANTOM5/library_size_t.txt", sep = " ", header = F)%>%mutate(sample_id=str_extract(V2, "CNhs.{5}"))
+libsize=read.delim("External_data/FANTOM5/library_size_pc.txt", sep = " ", header = F)%>%mutate(sample_id=str_extract(V2, "CNhs.{5}"))
 names(libsize)=c("size", "filename", "sample_id")
 
 cell_ont=cell_ont%>%left_join(libsize, by="sample_id")
 
 
 libsize_tissues=cell_ont%>%group_by(`Facet ontology term`)%>%summarise(libsize=sum(size, na.rm=T))
-write_tsv(libsize_tissues, "External_data/FANTOM5/library_size_tissue_by_facets.tsv")
+write_tsv(libsize_tissues, paste0("External_data/FANTOM5/library_size_", set,"_by_facets.tsv"))
 ```
 
 ```{r}
 if(params$bed_summ){
-  ls=load_summ_cage()%>%
-  ls=ls%>%list_rbind()%>%dplyr::rename(name=name.x)%>%left_join(libsize_tissues, by=c("tissue"="Facet ontology term"))
-  if(params$write){write_tsv(ls,paste0("Tables/",set,"_CAGE_activity.tsv"))}
+  ls=load_summ_cage()
+  ls=ls%>%list_rbind()%>%dplyr::rename(name=name.x)%>%left_join(libsize_tissues, by=c("sample"="Facet ontology term"))
+  if(params$write){write_tsv(ls,paste0("Analysis/Tables/",set,"_CAGE_activity.tsv"))}
 }else{
   if(params$write){
     ls=cell_ont_list%>%imap(~load_cage(.x)%>%mutate(sample=.y))%>%list_rbind()%>%dplyr::rename(name=name.x)
-    ls%>%write_tsv(paste0("Tables/",set,"_CAGE_activity.tsv"))}else{
-    ls=read_tsv(paste0("Tables/",set,"_CAGE_activity.tsv"))
+    ls%>%write_tsv(paste0("Analysis/Tables/",set,"_CAGE_activity.tsv"))}else{
+    ls=read_tsv(paste0("Analysis/Tables/",set,"_CAGE_activity.tsv"))
   }
 }
 long_ls=ls%>%mutate(TPM=1E6*counts/libsize)

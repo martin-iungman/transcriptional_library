@@ -128,10 +128,10 @@ data %>% group_by(mean_sw,rep) %>% summarise(CGI=sum(CGI)/n()) %>% ggplot(aes(me
 
 ```{r}
 p=ggviolin(data %>% filter(rep=="Rep 1"), x="CGI", y="mean", fill="CGI", draw_quantiles = 0.5, add="median_q1q3", palette=c("#14AFB2", "#216869"), alpha=0.7)
-p+stat_compare_means()+theme_pubclean()+labs(fill="Cpg island", x=NULL, y="Transcriptional mean activity")+theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+p+stat_compare_means()+theme_pubclean()+labs(fill="Cpg island", x=NULL, y="Transcriptional mean activity")+theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())+ylim(c(0.5,6.2))
 ggsave("Plots/Fig2/CGI_violin_rep1.pdf")
 p=ggviolin(data %>% filter(rep=="Rep 2"), x="CGI", y="mean", fill="CGI", draw_quantiles = 0.5, add="median_q1q3", palette=c("#14AFB2", "#216869"), alpha=0.7)
-p+stat_compare_means()+theme_pubclean()+labs(fill="CpG isalnd", x=NULL, y="Transcriptional mean activity")+theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+p+stat_compare_means()+theme_pubclean()+labs(fill="CpG isalnd", x=NULL, y="Transcriptional mean activity")+theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())+ylim(c(0.5,6.2))
 ggsave("Plots/Fig2/CGI_violin_rep2.pdf")
 ```
 
@@ -167,10 +167,10 @@ ggsave("Plots/Fig2/TATA_scatter.pdf")
 
 ```{r}
 p=ggviolin(data %>% filter(rep=="Rep 1"), x="TATA_EPD", y="mean", fill="TATA_EPD", draw_quantiles = 0.5, add="median_q1q3", palette=c("#14AFB2", "#216869"), alpha=0.7)
-p+stat_compare_means()+theme_pubclean()+labs(fill="TATA-box", x=NULL, y="Transcriptional mean activity")+theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+p+stat_compare_means()+theme_pubclean()+labs(fill="TATA-box", x=NULL, y="Transcriptional mean activity")+theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())+ylim(c(0.5,6.2))
 ggsave("Plots/Fig2/TATA_violin_rep1.pdf")
 p=ggviolin(data %>% filter(rep=="Rep 2"), x="TATA_EPD", y="mean", fill="TATA_EPD", draw_quantiles = 0.5, add="median_q1q3", palette=c("#14AFB2", "#216869"), alpha=0.7)
-p+stat_compare_means()+theme_pubclean()+labs(fill="TATA-box", x=NULL, y="Transcriptional mean activity")+theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+p+stat_compare_means()+theme_pubclean()+labs(fill="TATA-box", x=NULL, y="Transcriptional mean activity")+theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())+ylim(c(0.5,6.2))
 ggsave("Plots/Fig2/TATA_violin_rep2.pdf")
 ```
 
@@ -658,7 +658,7 @@ data %>% filter(prom_index==1)  %>%
 
 ```{r}
 data %>% filter( !is.na(expresion_vbility_class_tissue)) %>% fastDummies::dummy_cols("expresion_vbility_class_tissue") %>%  pivot_longer(starts_with("expresion_vbility_class_tissue_"), values_to="specificity", names_to = "class_name") %>% mutate(class_name=str_remove(class_name, "expresion_vbility_class_tissue_"), specificity=as.logical(specificity)) %>% 
-  ggplot(aes(median, fill=specificity))+geom_bar(position = "fill")+labs(fill="")+facet_grid(rep~class_name)+scale_fill_manual(values = clrs1[1:2])
+  ggplot(aes(median, fill=specificity))+geom_bar(position = "fill")+labs(fill="")+facet_grid(rep~class_name)#+scale_fill_manual(values = clrs1[1:2])
 ```
 
 ```{r}
@@ -667,6 +667,20 @@ data %>% ggplot(aes(expresion_vbility_class_tissue, mean))+geom_violin(draw_quan
 
 ```{r}
 data %>% ggplot(aes(median, gini_tissue))+geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)
+```
+
+```{r}
+data  %>% mutate(high_sp=gini_tissue>median(gini_tissue, na.rm=T)) %>% filter(!is.na(high_sp)) %>% group_by(mean_sw,rep) %>% summarise(high_sp=sum(high_sp)/n()) %>% ggplot(aes(mean_sw,high_sp))+geom_point(col="#14AFB2")+geom_smooth(col="#216869")+theme(text=element_text(size=20))+facet_wrap(~rep)+ylim(0,1)+labs(x="Mean activity (binned by rank)",y="Proportion of promoters")+ggtitle("High tissue specificity")
+ggsave("Plots/Fig2/high_tissue_sp_scatter.pdf")
+```
+
+```{r}
+p=ggviolin(data %>% filter(rep=="Rep 1")  %>% mutate(high_sp=gini_tissue>median(gini_tissue, na.rm=T)) %>% filter(!is.na(high_sp)), x="high_sp", y="mean", fill="high_sp", draw_quantiles = 0.5, add="median_q1q3", palette=c("#14AFB2", "#216869"), alpha=0.7)
+p+stat_compare_means()+theme_pubclean()+labs(fill="High tissue specificity", x=NULL, y="Transcriptional mean activity")+theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())+ylim(c(0.5,6.2))
+ggsave("Plots/Fig2/high_tissue_sp_violin_rep1.pdf")
+p=ggviolin(data %>% filter(rep=="Rep 2") %>% mutate(high_sp=gini_tissue>median(gini_tissue, na.rm=T)) %>% filter(!is.na(high_sp)), x="high_sp", y="mean", fill="high_sp", draw_quantiles = 0.5, add="median_q1q3", palette=c("#14AFB2", "#216869"), alpha=0.7)
+p+stat_compare_means()+theme_pubclean()+labs(fill="High tissue specificity", x=NULL, y="Transcriptional mean activity")+theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())+ylim(c(0.5,6.2))
+ggsave("Plots/Fig2/high_tissue_sp_violin_rep2.pdf")
 ```
 
 ### Shape
@@ -754,7 +768,7 @@ tidy_data=data  %>% select(-tissue_enrichment)%>% fastDummies::dummy_cols("TE_su
                           `Broad promoters`=shape_tissue==3,
                           #`High activity in HEK293`=hek_tpm>median(data$hek_tpm[data$hek_tpm>0])
                           `High activity in HEK293`=hek_tpm>mean(data$hek_tpm),
-                          `Cis Regulatory Module`=N_TF_CRM>0
+                          #`Cis Regulatory Module`=N_TF_CRM>0
 
 
                           ) %>%
@@ -812,7 +826,7 @@ tidy_data=data  %>% select(-tissue_enrichment)%>% fastDummies::dummy_cols("TE_su
         `High tissue specificity`,
         `Narrow promoters`,
         `High activity in HEK293`,
-        `Cis Regulatory Module`
+        #`Cis Regulatory Module`
          )%>%
   mutate(across(where(~ is.numeric(.x) && mean(.x)<1), as.logical), rep=as.factor(rep), across(where(is.logical), ~.x%>% factor(level=c("TRUE","FALSE")))) 
 ```
