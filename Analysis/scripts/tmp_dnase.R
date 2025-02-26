@@ -1,5 +1,6 @@
-library(tidyverse)
 library(rtracklayer)
+library(tidyverse)
+
 dnasa=rtracklayer::import.bw("External_data/ENCFF165GHP_DNase.bigWig", as = "GRanges")
 lib=rtracklayer::import.bed("Library_data/res/library.bed")
 strand(lib) <- "*"
@@ -9,6 +10,8 @@ seqlevels(lib)->seqlevels(dnasa)
 lib=rtracklayer::import.bed("Library_data/res/library.bed")
 df=as_tibble(ol) %>% select(-strand) %>% left_join(as_tibble(lib) %>% select(name, strand), by="name") %>% filter(str_detect(name, "^FP")) %>% 
   group_by(name) %>% mutate(range_order=((ifelse(strand=="-", row_number(-start), row_number(start))-1)*25), rel_score=score.x/sum(score.x))
+df %>% ggplot(aes(range_order %>% as_factor(), score.x))+geom_violin(draw_quantiles = 0.5)+geom_smooth(aes(x=range_order %>% as_factor() %>% as.numeric()))
+df %>% ggplot(aes(range_order %>% as_factor(), fill=score.x>1))+geom_bar(position="fill")
 df_matrix <- df %>% ungroup() %>%  select(name, score.x, range_order) %>% 
   pivot_wider(names_from = range_order, values_from = score.x) %>%
   select(-name) %>% # Remove the name column before converting to matrix
@@ -32,7 +35,7 @@ df_matrix <- df %>% ungroup() %>%  select(name, rel_score, range_order) %>%
   select(-name) %>% # Remove the name column before converting to matrix
   as.matrix()
 rownames(df_matrix) <- unique(df$name)
-heatmap_order <- hclust(dist(df_matrix))$order
+#heatmap_order <- hclust(dist(df_matrix))$order
 
 df_matrix_ordered <- df_matrix[heatmap_order, ]
 pheatmap::pheatmap(log10(df_matrix_ordered), 
@@ -114,8 +117,11 @@ df %>% select(name, score.x, range_order) %>% mutate(range_order=paste0("range_"
   ggplot(aes(as.numeric(mean_sw), var_rank_sw, col=high_occupancy))+geom_point(size=0.2, alpha=0.5)+facet_wrap(~rep)+
   xlab("Mean rank group")+ylab("Variance rank (SW)")+
   geom_smooth()+labs(col="high_occupancy")+scale_color_manual(values = c("#08415c", "#AD343E"))+ggpubr::theme_pubr(base_size = 20)
-df %>% select(name, score.x, range_order) %>% mutate(range_order=paste0("range_", range_order)) %>% pivot_wider(names_from = range_order, values_from = score.x)  %>% left_join(data,., by=c("seq_id"="name")) %>% 
-  group_by(rep, var_rank_sw) %>% summarise(across(starts_with("range"), mean)) %>% pivot_longer(starts_with("range")) %>% 
+df %>% select(name, score.x, range_order) %>% mutate(range_order=paste0("range_", range_order)) %>% 
+  pivot_wider(names_from = range_order, values_from = score.x)  %>% 
+  left_join(data,., by=c("seq_id"="name")) %>% 
+  group_by(rep, var_rank_sw) %>% summarise(across(starts_with("range"), mean)) %>% 
+  pivot_longer(starts_with("range")) %>% 
   ggplot(aes(var_rank_sw, value, col=name))+geom_point()+geom_smooth()+facet_wrap(~rep)
 
 df %>% select(name, score.x, range_order) %>% mutate(range_order=paste0("range_", range_order)) %>% pivot_wider(names_from = range_order, values_from = score.x)  %>% left_join(data,., by=c("seq_id"="name"))  %>%

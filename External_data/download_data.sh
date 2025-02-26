@@ -30,3 +30,26 @@ wget -O External_data/xpresso_predictions.xlsx https://www.biorxiv.org/highwire/
 
 # FANTOM5 enhancer
 wget -O External_data/F5.hg38.enhancers.bed https://fantom.gsc.riken.jp/5/datafiles/reprocessed/hg38_latest/extra/enhancer/F5.hg38.enhancers.bed.gz
+
+#ChIP-atlas
+wget https://chip-atlas.dbcls.jp/data/hg38/allPeaks_light/allPeaks_light.hg38.50.bed.gz
+wget https://chip-atlas.dbcls.jp/data/metadata/experimentList.tab
+bedtools intersect -wao -a ../Library_data/res/library.bed -b allPeaks_light.hg38.50.bed.gz > allPeaks_light.hg38.50_lib.bed
+# sort & cut
+awk -F'\t' '{print $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6}' experimentList.tab |  awk -F'\t' '$2=="hg38"'| sort -k1 > experimentList_chipatlas.tab
+sort -k10  allPeaks_light.hg38.50_lib.bed > allPeaks_light.hg38.50_lib_sorted.bed
+join -1 10 -2 1 -t $'\t' allPeaks_light.hg38.50_lib_sorted.bed experimentList_chipatlas.tab > allPeaks_light.hg38.50_lib_joined.bed
+
+#ENCODE
+wget -O External_data/ENCFF251DNC_ChIPSeq_NFYA_HepG2cells.bigBed  www.encodeproject.org/files/ENCFF251DNC/@@download/ENCFF251DNC.bigBed
+wget -O External_data/ENCFF047JBD_ChipSeq_NFYA_K562cells.bigBed www.encodeproject.org/files/ENCFF047JBD/@@download/ENCFF047JBD.bigBed
+wget -O External_data/ENCFF718CBS_ChIPSeq_NFYA_GM12878cells.bigBed www.encodeproject.org/files/ENCFF718CBS/@@download/ENCFF718CBS.bigBed
+wget -O External_data/ENCFF052HWH_ChIPSeq_SP1_K562cells.bigBed www.encodeproject.org/files/ENCFF052HWH/@@download/ENCFF052HWH.bigBed
+wget -O External_data/ENCFF617PEA_ChIPSeq_SP1_HEK293Tcells.bigBed www.encodeproject.org/files/ENCFF617PEA/@@download/ENCFF617PEA.bigBed
+wget -O External_data/ENCFF283JYY_ChIPSeq_SP1_HepG2cells.bigBed www.encodeproject.org/files/ENCFF283JYY/@@download/ENCFF283JYY.bigBed
+wget -O External_data/External_data/ENCFF980XCB_ChIPSeq_SP2_H1cells.bigBed www.encodeproject.org/files/ENCFF980XCB/@@download/ENCFF980XCB.bigBed
+wget -O External_data/ENCFF531VFB_ChIPSeq_SP2_HEK293cells.bigBed www.encodeproject.org/files/ENCFF531VFB/@@download/ENCFF531VFB.bigBed
+wget -O External_data/ENCFF177WIE_ChIPSeq_SP2_HepG2cells.bigBed www.encodeproject.org/files/ENCFF177WIE/@@download/ENCFF177WIE.bigBed
+
+
+

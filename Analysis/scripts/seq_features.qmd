@@ -33,7 +33,7 @@ library("EnsDb.Hsapiens.v86")
 ensembl = useMart("ensembl",dataset="hsapiens_gene_ensembl")
 ids_df=getBM(attributes=c('ensembl_gene_id', 'hgnc_symbol', 'chromosome_name'), 
       filters = 'hgnc_symbol', 
-      values = df$gene_sym, 
+      values = prom_df$gene_sym, 
       mart = ensembl)
 ids_df=ids_df %>% filter(chromosome_name%in%c(1:22,"X", "MT")) %>%unique()%>% group_by(hgnc_symbol) %>% filter(ensembl_gene_id==sample(ensembl_gene_id, 1)) %>% select(-chromosome_name)
 prom_df=left_join(prom_df, ids_df, by=c("gene_sym"="hgnc_symbol"))
@@ -77,7 +77,7 @@ p1+p2
 ### Observed vs Expected CpG
 
 ```{r}
-prom_df=Biostrings::oligonucleotideFrequency(dna, width=1)[, c("C", "G")] %>% as_tibble() %>% mutate(exp_cpg=(C*G)/(width(dna)^2), seq_id=lib$name) %>% select(-c(C,G)) %>% left_join(prom_df, ., by="seq_id")
+prom_df=Biostrings::oligonucleotideFrequency(dna, width=1)[, c("C", "G")] %>% as_tibble() %>% mutate(seq_id=lib$seq_id, exp_cpg=(C*G)/(width(dna)^2)) %>% select(-c(C,G)) %>% left_join(prom_df, ., by="seq_id")
 
 ggplot(prom_df, aes(CpG/exp_cpg))+geom_density()
 ```
@@ -122,17 +122,17 @@ Download [EPD](https://epd.epfl.ch/EPDnew_select.php) subsets and find which pro
 ![](../../Images/paste-9CDB619F.png){width="332"}
 
 ```{r}
-tata_epd=import.bed("External_data/human38_epd_TATA.bed")
+tata_epd=import.bed("External_data/EPD/human38_epd_TATA.bed")
 prom_df=prom_df%>%
   mutate(TATA_EPD=ifelse(type=="promoter",ifelse(name%in%tata_epd$name, T,F),NA))
 
-inr_epd=import.bed("External_data/human38_epd_INR.bed")
+inr_epd=import.bed("External_data/EPD/human38_epd_INR.bed")
 prom_df=prom_df%>%mutate(INR_EPD=ifelse(type=="promoter",ifelse(name%in%inr_epd$name, T,F),NA))
 
-ccaat_epd=import.bed("External_data/human38_epd_CCAAT.bed")
+ccaat_epd=import.bed("External_data/EPD/human38_epd_CCAAT.bed")
 prom_df=prom_df%>%mutate(CCAAT_EPD=ifelse(type=="promoter",ifelse(name%in%ccaat_epd$name, T,F),NA))
 
-gc_epd=rtracklayer::import.bed("External_data/human38_epd_GCbox.bed")
+gc_epd=rtracklayer::import.bed("External_data/EPD/human38_epd_GCbox.bed")
 prom_df=prom_df%>%mutate(GCbox_EPD=ifelse(type=="promoter",ifelse(name%in%gc_epd$name, T,F),NA))
 
 ```
@@ -141,22 +141,21 @@ prom_df=prom_df%>%mutate(GCbox_EPD=ifelse(type=="promoter",ifelse(name%in%gc_epd
 
 ```{r}
 tss_seq=lib%>% subset(width==252)%>% getSeq(Hsapiens,.) %>% as.character() %>% str_extract(".{18}$") %>% str_extract("^.{5}")
-tss_df=tibble(seq_id=(lib%>% subset(width==252))$name, 
-              seq=tss_seq, 
-              INR_strong_TSS=str_detect(seq, "(T|C)CA(G|C)(T|A)"), 
-              TCT_TSS=str_detect(seq, ".(T|C)(C|G)(T|C)(C|T)"), 
-              CA_TSS=str_detect(seq, ".CA.."), 
-              CG_TSS=str_detect(seq, ".CG.."), 
-              TA_TSS=str_detect(seq, ".TA.."), 
-              TG_TSS=str_detect(seq, ".TG.."),
-              #GC_TSS=str_detect(seq, ".GC.."),
-              PyPu_TSS=str_detect(seq, ".(C|T)(A|G).."),
-              other_TSS=INR_strong_TSS+TCT_TSS+CA_TSS+CG_TSS+TA_TSS+TG_TSS+INR_weak_TSS==0)
-
-tss_df %>% mutate(dinucleotide=str_sub(seq, start=2,end = 3)) %>% ggplot(aes(dinucleotide %>% fct_infreq()))+geom_bar()+xlab("TSS dinucleotide")
-prom_df %>% left_join(tss_df) %>% pivot_longer(ends_with("TSS"), names_to = "motif", values_to = "presence") %>% mutate(motif=str_remove(motif, "_TSS"))%>% ggplot(aes(motif, fill=presence))+geom_bar()
-prom_df %>% left_join(tss_df) %>% pivot_longer(ends_with("TSS"), names_to = "motif", values_to = "presence") %>% ggplot(aes(fill=presence, x=CGI))+geom_bar(position = "fill")+facet_wrap(~motif)
-prom_df %>% left_join(tss_df) %>% pivot_longer(ends_with("TSS"), names_to = "motif", values_to = "presence") %>% ggplot(aes(fill=presence, x=prom_index_g))+geom_bar(position = "fill")+facet_wrap(~motif)
+tss_df=tibble(seq_id=(lib%>% subset(width==252))$seq_id, 
+              TSS_seq=tss_seq, 
+              INR_strong_TSS=str_detect(TSS_seq, "(T|C)CA(G|C)(T|A)"), 
+              TCT_TSS=str_detect(TSS_seq, ".(T|C)(C|G)(T|C)(C|T)"), 
+              CA_TSS=str_detect(TSS_seq, ".CA.."), 
+              CG_TSS=str_detect(TSS_seq, ".CG.."), 
+              TA_TSS=str_detect(TSS_seq, ".TA.."), 
+              TG_TSS=str_detect(TSS_seq, ".TG.."),
+              GC_TSS=str_detect(TSS_seq, ".GC.."),
+              PyPu_TSS=str_detect(TSS_seq, ".(C|T)(A|G).."),
+              other_TSS=INR_strong_TSS+TCT_TSS+CA_TSS+CG_TSS+TA_TSS+TG_TSS==0)
+prom_df=left_join(prom_df, tss_df)
+tss_df %>% mutate(dinucleotide=str_sub(TSS_seq, start=2,end = 3)) %>% ggplot(aes(dinucleotide %>% fct_infreq()))+geom_bar()+xlab("TSS dinucleotide")
+prom_df %>% filter(type=="promoter") %>% pivot_longer(ends_with("TSS"), names_to = "motif", values_to = "presence") %>% mutate(motif=str_remove(motif, "_TSS"))%>% ggplot(aes(motif, fill=presence))+geom_bar()
+prom_df  %>% filter(type=="promoter") %>% pivot_longer(ends_with("TSS"), names_to = "motif", values_to = "presence") %>% ggplot(aes(fill=presence, x=CGI))+geom_bar(position = "fill")+facet_wrap(~motif)
 ```
 
 ### PhyloP score
@@ -172,35 +171,34 @@ multiBigwigSummary BED-file -b External_data/hg38.phyloP100way.bw -o hg38.phyloP
 phylo100=import.bed("External_data/hg38.phyloP100way_summary_lib.bed")%>%sort()
 lib=sort(lib)
 lib$phylo100=as.numeric(phylo100$name)%>%round(4)
-df=tibble(seq_id=lib$seq_id, phylo100=lib$phylo100, phylo17=lib$phylo17, phastcons100=lib$phastcons100)%>%left_join(df,., by="seq_id")
+prom_df=left_join(prom_df, as_tibble(values(lib)))
 
-range_sum_phylo=phylo1pb_prom_df %>% mutate(range=ifelse((relpos-16)<=50, "close", ifelse((relpos-16)<=150, "intermediate", "far"))) %>% group_by(name, range) %>% summarise(mean_range_phylo100=mean(score, na.rm=T))
-df=range_sum_phylo %>% pivot_wider(values_from = mean_range_phylo100, names_from = range, names_prefix = "phylop100_") %>% left_join(df,., by=c("seq_id"="name"))
-
-df%>%ggplot(aes(phylo100, col=type))+geom_density()
+prom_df%>%ggplot(aes(phylo100, col=type))+geom_density()
 ```
 
 ```{r}
-phylo1pb=rtracklayer::import.bed("Tables/phyloP/hg38.phyloP100way_summary_lib_1bp.bed")
+phylo1pb=rtracklayer::import.bed("External_data/hg38.phyloP100way_summary_lib_1bp.bed")
 phylo1pb$score=phylo1pb$name
 phylo1pb$name=NULL
 phylo1pb=plyranges::join_overlap_inner(phylo1pb, lib)
-phylo1pb$score=phylo1pb$score.x
-phylo1pb$score.y=NULL
-phylo1pb$score.x=NULL
-phylo1pb_prom=subset(phylo1pb, str_detect(name, "^FP.{6}_"))
+phylo1pb_prom=subset(phylo1pb, str_detect(seq_id, "^FP.{6}_"))
 lib_df=as_tibble(lib)
 names(lib_df)=paste0(names(lib_df), "_seq")
-values(phylo1pb_prom)=left_join(as_tibble(values(phylo1pb_prom)), lib_df, by=c("name"="name_seq"))
+values(phylo1pb_prom)=left_join(as_tibble(values(phylo1pb_prom)), lib_df, by=c("seq_id"="seq_id_seq"))
 strand(phylo1pb_prom)=phylo1pb_prom$strand_seq
 phylo1pb_prom$seq=getSeq(Hsapiens,phylo1pb_prom)
 phylo1pb_prom_df=unique(as_tibble(phylo1pb_prom)) %>% mutate(relpos=ifelse(strand_seq=="-", abs(start_seq-start), abs(start-end_seq)), score=as.numeric(score))
-ordered_names_phylo=phylo1pb_prom_df%>% group_by(name) %>% summarise(med_score=median(score)) %>% arrange(med_score)
-phylo1pb_prom_df %>% write_tsv("Tables/phylo100_1pb_lib.tsv")
+ordered_names_phylo=phylo1pb_prom_df%>% group_by(seq_id) %>% summarise(med_score=median(score)) %>% arrange(med_score)
+phylo1pb_prom_df %>% write_tsv("Analysis/Tables/phylo100_1pb_lib.tsv")
 ```
 
 ```{r}
-ggplot(phylo1pb_prom_df, aes(relpos-16,factor(name, levels = ordered_names_phylo$name), fill=score))+geom_tile()+
+range_sum_phylo=phylo1pb_prom_df %>% mutate(range=ifelse((relpos-16)<=50, "close", ifelse((relpos-16)<=150, "intermediate", "far"))) %>% group_by(seq_id, range) %>% summarise(mean_range_phylo100=mean(score, na.rm=T))
+prom_df=range_sum_phylo %>% pivot_wider(values_from = mean_range_phylo100, names_from = range, names_prefix = "phylop100_") %>% left_join(prom_df,., by=c("seq_id"))
+```
+
+```{r}
+ggplot(phylo1pb_prom_df, aes(relpos-16,factor(seq_id, levels = ordered_names_phylo$seq_id), fill=score))+geom_tile()+
   scale_fill_gradient2(low =ghibli::ghibli_palette("PonyoMedium",7)[3], mid = "white", high=ghibli::ghibli_palette("PonyoMedium",7)[4] )+
   theme(axis.text.y = element_blank())+xlab("Relative position to TSS")+ylab("Promoters")+labs(legend="PhyloP score")
 
@@ -228,7 +226,7 @@ values(hg19_young_lib) %>% as_tibble() %>% filter(!is.na(turnover)) %>% select(-
 
 prom_df=prom_df %>% left_join(turnover_df)
 
-ggplot(prom_df, aes(turnover))+geom_histogram(stat="count")
+ggplot(prom_df %>% filter(type=="promoter", !is.na(turnover)), aes(turnover %>% fct_infreq()))+geom_histogram(stat="count")+xlab("Human-Mouse functional conservation")
 ```
 
 ```{r}
@@ -248,7 +246,7 @@ prom_df=prom_df %>% left_join(crm %>% select(seq_id, N_TF_CRM), by="seq_id") %>%
 ### Repeated Elements
 
 ```{r}
-repeatmasker=read_delim("External_data/repeatMasker_hg38.txt", col_names = T,  delim = " ") %>% select(-strand)
+repeatmasker=read_delim("External_data/repeatMasker_hg38.txt", col_names = T,  delim = " ") 
 repeatmasker_gr=GRanges(repeatmasker) %>% plyranges::join_overlap_intersect(lib, .) %>% subset(width>10)
 
 dna_repeat<-getSeq(Hsapiens,repeatmasker_gr)
@@ -272,6 +270,16 @@ TE_df<-dplyr::filter(repeatmasker_df, repeat_family=="TE") %>% select(seq_id,rep
 prom_df=prom_df %>% left_join(LCR_df) %>% left_join(TE_df)%>% mutate(across(c(LCR_overlap,TE_overlap,G_C_TE,G_C_LCR),function(x)replace_na(x, 0)), TE_superclass=TE_superclass %>% fct_lump_min(100))
 ```
 
+### Cis Regulatory Modules (CRM) (from ChIP-seq)
+
+```{r}
+crm=read_tsv("Analysis/Tables/library_remap_CRM.bed", col_names = c("seqnames", "start", "end", "seq_id", "score", "strand", "seqnames_peak", "start_peak",  "end_peak", "peak", "N_TF_CRM", "strand_peak", "thickstart_peak", "thickend_peak", "rgb"))
+prom_df %>% filter(type=="promoter")%>% left_join(crm) %>% mutate(`No peak`=is.na(seqnames_peak)) %>% count(`No peak`)
+crm %>% ggplot(aes(N_TF_CRM)) +geom_density()+xlab("Number of non-redundant TF peaks")
+prom_df=crm %>% select(seq_id, N_TF_CRM) %>% group_by(seq_id) %>% summarise(N_TF_CRM=sum(N_TF_CRM)) %>% right_join(prom_df, by="seq_id") %>% mutate(N_TF_CRM=replace_na(N_TF_CRM,0))
+
+```
+
 ### Enhancers
 
 ```{r}
@@ -284,11 +292,74 @@ lib100kb=promoters(lib, upstream=50000, downstream=50000)
 lib$enh10kb=countOverlaps(lib10kb, enhancers)
 lib$enh50kb=countOverlaps(lib50kb, enhancers)
 lib$enh100kb=countOverlaps(lib100kb, enhancers)
-values(lib) %>% as_tibble() %>% select(-score)%>% pivot_longer(starts_with("enh"), names_to = "range") %>% ggplot(aes(value, fill=range))+geom_bar(stat = "count", position = "dodge")
+values(lib) %>% as_tibble() %>% pivot_longer(starts_with("enh"), names_to = "range") %>% ggplot(aes(value, fill=range))+geom_bar(stat = "count", position = "dodge")
 
-prom_df=left_join(prom_df, values(lib) %>% as_tibble() , by="seq_id")
-prom_df %>% 
-  ggplot(aes(enh50kb %>% as_factor() %>% fct_lump_lowfreq(), gini_tissue))+
-  geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+labs(x="Enhancers in 50kb window flanking TSS", y="Tissue specificty")
+prom_df=left_join(prom_df, values(lib) %>% as_tibble())
+# prom_df %>% 
+#   ggplot(aes(enh50kb %>% as_factor() %>% fct_lump_lowfreq(), gini_tissue))+
+#   geom_violin(draw_quantiles = 0.5)+facet_wrap(~rep)+labs(x="Enhancers in 50kb window flanking TSS", y="Tissue specificty")
 
+```
+
+### Chromatin accessibility (DNase)
+
+```{r}
+dnasa=rtracklayer::import.bw("External_data/ENCFF165GHP_DNase.bigWig", as = "GRanges")
+lib2=lib
+strand(lib2) <- "*"
+seqlevels(lib2)->seqlevels(dnasa)
+ol=plyranges::find_overlaps( dnasa, lib2)
+tmp_df=as_tibble(ol) %>% select(-strand) %>% left_join(as_tibble(lib) %>% select(name, strand), by="name") %>% filter(str_detect(name, "^FP")) %>% 
+  group_by(name) %>% mutate(range_order=((ifelse(strand=="-", row_number(-start), row_number(start))-1)*25), rel_score=score.x/sum(score.x))
+
+```
+
+### NFY ChIP-seq
+
+```{r}
+NFYA_chip_K562=rtracklayer::import("External_data/ENCFF047JBD_ChipSeq_NFYA_K562cells.bigBed")
+NFYA_chip_K562=(subsetByOverlaps(lib, NFYA_chip_K562))$seq_id
+NFYA_chip_HepG2=rtracklayer::import("External_data/ENCFF251DNC_ChIPSeq_NFYA_HepG2cells.bigBed")
+NFYA_chip_HepG2=(subsetByOverlaps(lib, NFYA_chip_HepG2))$seq_id
+NFYA_chip_GM12878=rtracklayer::import("External_data/ENCFF718CBS_ChIPSeq_NFYA_GM12878cells.bigBed")
+NFYA_chip_GM12878=(subsetByOverlaps(lib, NFYA_chip_GM12878))$seq_id
+
+ggVennDiagram::ggVennDiagram(list(K562=NFYA_chip_K562, HepG2=NFYA_chip_HepG2, GM12878=NFYA_chip_GM12878))+scale_fill_gradient(low=clrs1[1], high=clrs1[2])+scale_color_manual(values=rep("black",3))+ggtitle("NFYA ChIP")
+```
+
+```{r}
+prom_df=prom_df %>% mutate(NFYA_chip_K562=seq_id %in% NFYA_chip_K562,
+                NFYA_chip_HepG2=seq_id%in%NFYA_chip_HepG2,
+                NFYA_chip_GM12878=seq_id%in%NFYA_chip_GM12878)
+prom_df %>% filter(type=="promoter") %>%  select(contains("NFYA"), contains("CCAAT")) %>% cor() %>% ggcorrplot::ggcorrplot()
+```
+
+### SP ChIP
+
+```{r}
+SP1_chip_K562=rtracklayer::import("External_data/ENCFF052HWH_ChIPSeq_SP1_K562cells.bigBed") %>% subsetByOverlaps(lib, .)
+SP1_chip_HEK293T=rtracklayer::import("External_data/ENCFF617PEA_ChIPSeq_SP1_HEK293Tcells.bigBed")%>% subsetByOverlaps(lib, .)
+SP1_chip_HepG2=rtracklayer::import("External_data/ENCFF283JYY_ChIPSeq_SP1_HepG2cells.bigBed")%>% subsetByOverlaps(lib, .)
+ggVennDiagram::ggVennDiagram(list(K562=SP1_chip_K562$seq_id, HepG2=SP1_chip_HepG2$seq_id, HEK293T=SP1_chip_HEK293T$seq_id))+scale_fill_gradient(low=clrs1[1], high=clrs1[2])+scale_color_manual(values=rep("black",3))+ggtitle("SP1 ChIP")
+```
+
+```{r}
+prom_df=prom_df  %>% mutate(SP1_chip_K562=seq_id%in%SP1_chip_K562$seq_id,
+                SP1_chip_HepG2=seq_id%in%SP1_chip_HepG2$seq_id,
+                SP1_chip_HEK293T=seq_id%in%SP1_chip_HEK293T$seq_id)
+```
+
+```{r}
+# SP2_chip_H1=rtracklayer::import("External_data/ENCFF980XCB_ChIPSeq_SP2_H1cells.bigBed") %>% subsetByOverlaps(lib, .)
+SP2_chip_HEK293=rtracklayer::import("External_data/ENCFF531VFB_ChIPSeq_SP2_HEK293cells.bigBed")%>% subsetByOverlaps(lib, .)
+SP2_chip_HepG2=rtracklayer::import("External_data/ENCFF177WIE_ChIPSeq_SP2_HepG2cells.bigBed")%>% subsetByOverlaps(lib, .)
+prom_df=prom_df%>% mutate(#SP2_chip_H1=seq_id%in%SP2_chip_H1$seq_id,
+                SP2_chip_HepG2=seq_id%in%SP2_chip_HepG2$seq_id,
+                SP2_chip_HEK293=seq_id%in%SP2_chip_HEK293$seq_id)
+ggVennDiagram::ggVennDiagram(list(#H1=SP2_chip_H1$seq_id, 
+                                  HepG2=SP2_chip_HepG2$seq_id, HEK293=SP2_chip_HEK293$seq_id))+scale_fill_gradient(low=clrs1[1], high=clrs1[2])+scale_color_manual(values=rep("black",2))+ggtitle("SP2 ChIP")
+```
+
+```{r}
+prom_df %>% filter(type=="promoter") %>% select(contains("NFYA"),  contains("SP"),contains("CCAAT"),GCbox_EPD) %>% cor() %>% ggcorrplot::ggcorrplot()+scale_fill_gradient(low="white", high=clrs1[2])
 ```
