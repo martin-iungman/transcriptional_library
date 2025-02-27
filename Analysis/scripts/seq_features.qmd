@@ -233,16 +233,6 @@ ggplot(prom_df %>% filter(type=="promoter", !is.na(turnover)), aes(turnover %>% 
 phylo1pb_prom_df %>% left_join(prom_df, by=c("name"="seq_id"))%>% group_by(relpos, turnover) %>% summarise(med_score=median(score, na.rm=T)) %>% ggplot(aes(relpos-15,med_score, col=turnover))+geom_line(linewidth=0.2)+xlab("Relative position to TSS")+ylab("Median PhyloP score")+geom_smooth()
 ```
 
-### Cis Regulatory Modules (CRM) (from ChIP-seq)
-
-```{r}
-crm=read_tsv("Tables/library_remap_CRM.bed", col_names = c("seqnames", "start", "end", "seq_id", "score", "strand", "seqnames_peak", "start_peak",  "end_peak", "peak", "N_TF_CRM", "strand_peak", "thickstart_peak", "thickend_peak", "rgb")) prom_df %>% filter(type=="promoter")%>% left_join(crm) %>% mutate(`No peak`=is.na(seqnames_peak)) %>% count(`No peak`)
-
-crm %>% ggplot(aes(N_TF_CRM)) +geom_density()+xlab("Number of non-redundant TF peaks")
-
-prom_df=prom_df %>% left_join(crm %>% select(seq_id, N_TF_CRM), by="seq_id") %>% mutate(N_TF_CRM=replace_na(N_TF_CRM,0))
-```
-
 ### Repeated Elements
 
 ```{r}
@@ -309,12 +299,32 @@ lib2=lib
 strand(lib2) <- "*"
 seqlevels(lib2)->seqlevels(dnasa)
 ol=plyranges::find_overlaps( dnasa, lib2)
-tmp_df=as_tibble(ol) %>% select(-strand) %>% left_join(as_tibble(lib) %>% select(name, strand), by="name") %>% filter(str_detect(name, "^FP")) %>% 
-  group_by(name) %>% mutate(range_order=((ifelse(strand=="-", row_number(-start), row_number(start))-1)*25), rel_score=score.x/sum(score.x))
+long_dnase=as_tibble(ol) %>% select(-strand) %>% left_join(as_tibble(lib) %>% select(seq_id, strand), by="seq_id") %>% filter(str_detect(seq_id, "^FP")) %>% 
+  group_by(seq_id) %>% mutate(range_order=((ifelse(strand=="-", row_number(-start), row_number(start))-1)*25), rel_score=score/sum(score))
+wide_dnase=long_dnase %>% select(seq_id, range_order, score) %>% group_by(seq_id) %>% mutate(mean_dnase=mean(score)) %>% pivot_wider(names_from = range_order, values_from = score, names_prefix = "dnase_") %>% select(-dnase_275)
+prom_df=left_join(prom_df, wide_dnase)
 
+long_dnase %>% ggplot(aes(range_order %>% as_factor(), score))+geom_violin(draw_quantiles = 0.5)+geom_smooth(aes(x=range_order %>% as_factor() %>% as.numeric()))
+long_dnase %>% ggplot(aes(range_order %>% as_factor(), fill=score>1))+geom_bar(position="fill")
+df_matrix <- long_dnase %>% ungroup() %>%  select(seq_id, score, range_order) %>% 
+  pivot_wider(names_from = range_order, values_from = score) %>%
+  select(-seq_id) %>% # Remove the name column before converting to matrix
+  as.matrix()
+rownames(df_matrix) <- unique(long_dnase$seq_id)
+heatmap_order <- hclust(dist(df_matrix))$order
+
+df_matrix_ordered <- df_matrix[heatmap_order, ]
+pheatmap::pheatmap(df_matrix_ordered, 
+         color = colorRampPalette(c("blue", "white", "red"))(100),
+         cluster_rows = FALSE,  
+         cluster_cols = FALSE, 
+         show_rownames = TRUE, 
+         show_colnames = TRUE,  
+         scale = "none", 
+         main = "DNase accesibility") 
 ```
 
-### NFY ChIP-seq
+### NFYA ChIP-seq
 
 ```{r}
 NFYA_chip_K562=rtracklayer::import("External_data/ENCFF047JBD_ChipSeq_NFYA_K562cells.bigBed")
@@ -362,4 +372,30 @@ ggVennDiagram::ggVennDiagram(list(#H1=SP2_chip_H1$seq_id,
 
 ```{r}
 prom_df %>% filter(type=="promoter") %>% select(contains("NFYA"),  contains("SP"),contains("CCAAT"),GCbox_EPD) %>% cor() %>% ggcorrplot::ggcorrplot()+scale_fill_gradient(low="white", high=clrs1[2])
+```
+
+### PUFFIN prediction
+
+##### Reprocessed
+
+```{r}
+df_pred=read_tsv("Analysis/Tables/Dudnyk_puffin_prediction_summ.tsv")
+prom_df=left_join(prom_df, df_pred, by="seq_id")
+```
+
+##### Preprocessed (selectivity)
+
+```{r}
+epd=import.bed("External_data/EPD/human38_epdnew.bed")
+selectivity_puffin=readxl::read_xlsx("External_data/dudnyk2024_sup.xlsx", sheet=5, skip = 1) %>% dplyr::rename(start=TSS, selectivity_dudnik=`Selectivity (Puffin-D)`, motif_selectivity_dudnik=`Motif Selectivity`, dispersion_tissue_dudnik=`Dispersion index (log10)`,mean_expr_log10_dudnik=`Mean expression (log10)`)%>% select(-geneID, -geneName) %>% unique()
+selectivity_puffin$end=selectivity_puffin$start
+gr_selectivity_puffin=GRanges(selectivity_puffin)
+selectivity_puffin_lib=plyranges::join_overlap_intersect_directed(promoters(epd, upstream=10,downstream =10), gr_selectivity_puffin)  %>% values() %>% as_tibble() %>% add_count(name) %>% filter(n==1) %>% select(-c(n,score))
+prom_df=left_join(prom_df, selectivity_puffin_lib, by="name")
+```
+
+### Endogenous HEK293 activity
+
+```{r}
+hek_cage=read_tsv("Analysis/Tables/HEK_CAGEr_df.tsv")
 ```
