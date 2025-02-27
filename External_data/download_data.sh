@@ -51,5 +51,7 @@ wget -O External_data/External_data/ENCFF980XCB_ChIPSeq_SP2_H1cells.bigBed www.e
 wget -O External_data/ENCFF531VFB_ChIPSeq_SP2_HEK293cells.bigBed www.encodeproject.org/files/ENCFF531VFB/@@download/ENCFF531VFB.bigBed
 wget -O External_data/ENCFF177WIE_ChIPSeq_SP2_HepG2cells.bigBed www.encodeproject.org/files/ENCFF177WIE/@@download/ENCFF177WIE.bigBed
 
+#PUFFIN 
+wget -O External_data/dudnyk2024_sup.zip https://www.science.org/doi/suppl/10.1126/science.adj0116/suppl_file/science.adj0116_tables_s1_to_s8.zip | gzip -d
 
 
